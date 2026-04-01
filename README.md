@@ -1,125 +1,115 @@
-# WasmEdge Dependency Tree Prototype (LFX #4514)
+# LifeTree
 
-Standalone C++ prototype for the WasmEdge mentorship project:
+Dependency-aware lifecycle management for interdependent runtime modules and resources.
 
-- Issue: https://github.com/WasmEdge/WasmEdge/issues/4514
-- Goal: safe module lifecycle management using explicit dependency tracking
+LifeTree is a small C++ library for modeling dependency relationships between runtime-owned objects and enforcing safe deletion semantics. It is designed for systems code that needs explicit answers to questions like:
 
-This prototype models module instances as nodes in a directed graph (`dependent -> dependency`) and enforces safe deletion semantics.
+- Can this module be deleted right now?
+- Which live objects block deletion?
+- What is the minimal safe deletion order?
+- Which invariants should always hold after graph mutation?
 
-## What This Prototype Demonstrates
+The current codebase is intentionally compact. The focus is correctness, determinism, and inspectability rather than framework-heavy abstraction.
 
-1. Dependency-aware module lifecycle behavior.
-2. Safe deletion checks with clear blocker diagnostics.
-3. Cycle prevention during graph updates.
-4. Deterministic ordering for load/delete planning.
-5. Test-driven validation across realistic dependency shapes.
+## Why This Exists
 
-## Feature Overview
+Many runtimes, plugin systems, and embedders allow objects to be registered, linked, unregistered, and destroyed at different times. Once dependencies appear between those objects, deletion stops being a bookkeeping problem and becomes a lifetime-safety problem.
 
-### Core graph operations
+LifeTree explores that problem directly with:
 
-- Add/remove modules.
-- Add/remove dependency edges.
-- Query direct dependencies and dependents.
-- Query transitive dependencies and dependents.
+- explicit dependency edges (`consumer -> provider`)
+- safe-delete checks with blocker diagnostics
+- deterministic cascade planning
+- cycle rejection on mutation
+- invariant validation for debugging and tests
 
-### Safety and correctness
+## Current Capabilities
 
-- Reject self-dependency edges.
-- Reject cycle-creating dependency insertion.
-- `canSafelyDelete`: explicit check with blocker list.
-- `deleteModule`: safe deletion only when unblocked.
-- `forceDeleteWithCascade`: controlled dependents-first cascade deletion.
+### Graph mutation
 
-### Analysis and diagnostics
+- add and remove modules
+- add and remove dependency edges
+- reject self-dependencies
+- reject cycle-creating insertions
 
-- `analyzeDelete`: direct + transitive blockers and suggested cascade order.
-- `topologicalOrder`: dependency-valid order.
-- `validateInvariants`: bidirectional edge consistency checks.
-- `stats`/`roots`/`leaves`/`isolatedModules` helpers.
-- `toDot`: Graphviz DOT export for visualization.
+### Lifetime safety
+
+- check whether a module can be deleted safely
+- report direct blockers
+- analyze transitive impact before deletion
+- compute a deterministic dependents-first cascade order
+
+### Inspection and debugging
+
+- direct dependency and dependent queries
+- transitive dependency and dependent traversal
+- topological ordering
+- roots, leaves, isolated-node, and edge-count helpers
+- Graphviz DOT export
+- invariant validation for edge consistency
 
 ## Project Layout
 
 ```text
-wasmedge-dependency-tree-poc/
+lifetree/
 |-- CMakeLists.txt
 |-- README.md
 |-- TEST_RESULTS.md
+|-- PHASE1.md
 |-- include/
-|   |-- dependency_tree.h
+|   |-- lifetree.h
 |-- src/
-|   |-- dependency_tree.cpp
-|   |-- main.cpp
+|   |-- lifetree.cpp
+|   |-- demo.cpp
 |-- tests/
-|   |-- test_dependency_tree.cpp
+|   |-- lifetree_tests.cpp
 |-- .gitignore
 ```
 
-## Quick Start
+## Build And Run
 
-### Option A: CMake (recommended when available)
+### CMake
 
 ```bash
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
-./build/dep_tree_demo
+./build/lifetree_demo
 ```
 
-### Option B: Direct g++ build
+### Direct compiler invocation
 
 ```bash
 mkdir -p build
-g++ -std=c++17 -Wall -Wextra -Wpedantic -Iinclude src/dependency_tree.cpp src/main.cpp -o build/dep_tree_demo
-g++ -std=c++17 -Wall -Wextra -Wpedantic -Iinclude src/dependency_tree.cpp tests/test_dependency_tree.cpp -o build/dep_tree_tests
-./build/dep_tree_tests
-./build/dep_tree_demo
+g++ -std=c++17 -Wall -Wextra -Wpedantic -Iinclude src/lifetree.cpp src/demo.cpp -o build/lifetree_demo
+g++ -std=c++17 -Wall -Wextra -Wpedantic -Iinclude src/lifetree.cpp tests/lifetree_tests.cpp -o build/lifetree_tests
+./build/lifetree_tests
+./build/lifetree_demo
 ```
 
 ## Test Coverage
 
 The current test suite covers:
 
-1. Module add/duplicate/invalid-input behavior.
-2. Linear chain deletion constraints.
-3. Diamond dependency behavior.
-4. Cycle insertion rejection.
-5. Topological order constraints.
-6. Missing-node error handling.
-7. Dependency edge removal semantics.
-8. Transitive query correctness.
-9. Delete analysis output correctness.
-10. Cascade deletion behavior.
-11. Graph stats/helper APIs.
-12. Invariant validation checks.
+1. module add, duplicate handling, and invalid input
+2. linear dependency deletion constraints
+3. diamond dependency behavior
+4. cycle insertion rejection
+5. topological ordering constraints
+6. missing-node error handling
+7. dependency edge removal semantics
+8. transitive query correctness
+9. delete-analysis output correctness
+10. cascade deletion behavior
+11. graph stats and helper APIs
+12. invariant validation checks
 
-Latest local run result is documented in `TEST_RESULTS.md`.
+The latest local run result is recorded in `TEST_RESULTS.md`.
 
-## Example Runtime Output (Demo)
+## Intended Direction
 
-The demo prints:
+LifeTree is being developed as a standalone systems project rather than as a runtime-specific patch set. The current implementation keeps the model small on purpose. The next stage is described in `PHASE1.md`.
 
-- topological order,
-- graph roots/leaves/stats,
-- delete blockers for a target module,
-- transitive impact and cascade suggestion,
-- DOT graph output,
-- post-deletion state transitions.
+## Scope
 
-## Mapping to WasmEdge Integration
-
-Prototype APIs map directly to likely runtime integration points:
-
-- `addModule` / `addDependency`: module instantiate/link steps.
-- `canSafelyDelete` / `deleteModule`: store delete guardrails.
-- `analyzeDelete`: operator-facing diagnostics for blocked deletion.
-- `validateInvariants`: development/debug safety checks.
-
-## Scope Notes
-
-- This is a focused prototype, not a drop-in runtime patch.
-- It is intentionally dependency-light for faster review and iteration.
-- Primary objective is proving lifecycle safety semantics with runnable evidence.
-
+This repository currently demonstrates the core lifecycle-safety model in a compact form. It is not yet a full runtime integration layer.
