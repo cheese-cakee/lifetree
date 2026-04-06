@@ -27,18 +27,6 @@ std::string join(const std::vector<std::string> &items) {
   return stream.str();
 }
 
-template <typename T>
-std::vector<T> toSortedVector(const std::unordered_set<T> &input) {
-  std::vector<T> values(input.begin(), input.end());
-  std::sort(values.begin(), values.end());
-  return values;
-}
-
-template <typename T>
-std::vector<T> toSortedVector(const std::set<T> &input) {
-  return {input.begin(), input.end()};
-}
-
 } // namespace
 
 bool LifeTree::addModule(const std::string &name, std::string *error) {
@@ -48,12 +36,14 @@ bool LifeTree::addModule(const std::string &name, std::string *error) {
   }
 
   std::lock_guard<std::mutex> lock(mutex_);
-  if (nodes_.find(name) != nodes_.end()) {
+  if (name_to_id_.find(name) != name_to_id_.end()) {
     setError(error, "module already exists: " + name);
     return false;
   }
 
-  nodes_.emplace(name, Node{name, {}, {}});
+  const ModuleId id = next_module_id_++;
+  nodes_.emplace(id, Node{id, name, {}, {}});
+  name_to_id_.emplace(name, id);
   return true;
 }
 
@@ -62,56 +52,62 @@ bool LifeTree::addDependency(const std::string &from, const std::string &to, std
     setError(error, "dependency endpoints cannot be empty");
     return false;
   }
-  if (from == to) {
-    setError(error, "self-dependency is not allowed: " + from);
-    return false;
-  }
 
   std::lock_guard<std::mutex> lock(mutex_);
-  auto fromIt = nodes_.find(from);
-  if (fromIt == nodes_.end()) {
+
+  ModuleId fromId = 0;
+  if (!resolveModuleIdUnlocked(from, &fromId, error)) {
     setError(error, "source module does not exist: " + from);
     return false;
   }
 
-  auto toIt = nodes_.find(to);
-  if (toIt == nodes_.end()) {
+  ModuleId toId = 0;
+  if (!resolveModuleIdUnlocked(to, &toId, error)) {
     setError(error, "target module does not exist: " + to);
     return false;
   }
 
-  if (fromIt->second.Dependencies.find(to) != fromIt->second.Dependencies.end()) {
+  if (fromId == toId) {
+    setError(error, "self-dependency is not allowed: " + from);
+    return false;
+  }
+
+  auto &fromNode = nodes_.at(fromId);
+  if (fromNode.Dependencies.find(toId) != fromNode.Dependencies.end()) {
     setError(error, "dependency already exists: " + from + " -> " + to);
     return false;
   }
 
-  if (wouldCreateCycleUnlocked(from, to)) {
+  if (wouldCreateCycleUnlocked(fromId, toId)) {
     setError(error, "adding dependency would create a cycle: " + from + " -> " + to);
     return false;
   }
 
-  fromIt->second.Dependencies.insert(to);
-  toIt->second.Dependents.insert(from);
+  fromNode.Dependencies.insert(toId);
+  nodes_.at(toId).Dependents.insert(fromId);
   return true;
 }
 
 bool LifeTree::removeDependency(const std::string &from, const std::string &to, std::string *error) {
   std::lock_guard<std::mutex> lock(mutex_);
-  auto fromIt = nodes_.find(from);
-  auto toIt = nodes_.find(to);
-  if (fromIt == nodes_.end() || toIt == nodes_.end()) {
+
+  ModuleId fromId = 0;
+  ModuleId toId = 0;
+  if (!resolveModuleIdUnlocked(from, &fromId, nullptr) ||
+      !resolveModuleIdUnlocked(to, &toId, nullptr)) {
     setError(error, "cannot remove dependency between unknown modules");
     return false;
   }
 
-  auto dependencyIt = fromIt->second.Dependencies.find(to);
-  if (dependencyIt == fromIt->second.Dependencies.end()) {
+  auto &fromNode = nodes_.at(fromId);
+  auto dependencyIt = fromNode.Dependencies.find(toId);
+  if (dependencyIt == fromNode.Dependencies.end()) {
     setError(error, "dependency does not exist: " + from + " -> " + to);
     return false;
   }
 
-  fromIt->second.Dependencies.erase(dependencyIt);
-  toIt->second.Dependents.erase(from);
+  fromNode.Dependencies.erase(dependencyIt);
+  nodes_.at(toId).Dependents.erase(fromId);
   return true;
 }
 
@@ -119,39 +115,49 @@ bool LifeTree::canSafelyDelete(const std::string &name,
                                std::vector<std::string> *blockers,
                                std::string *error) const {
   std::lock_guard<std::mutex> lock(mutex_);
-  auto nodeIt = nodes_.find(name);
-  if (nodeIt == nodes_.end()) {
+
+  ModuleId id = 0;
+  if (!resolveModuleIdUnlocked(name, &id, error)) {
     setError(error, "module does not exist: " + name);
     return false;
   }
 
+  const auto &node = nodes_.at(id);
   if (blockers != nullptr) {
-    *blockers = toSortedVector(nodeIt->second.Dependents);
+    *blockers = idsToSortedNamesUnlocked(node.Dependents);
   }
-  return nodeIt->second.Dependents.empty();
+  return node.Dependents.empty();
 }
 
 bool LifeTree::deleteModule(const std::string &name, std::string *error) {
   std::lock_guard<std::mutex> lock(mutex_);
-  auto nodeIt = nodes_.find(name);
+
+  ModuleId id = 0;
+  if (!resolveModuleIdUnlocked(name, &id, error)) {
+    setError(error, "module does not exist: " + name);
+    return false;
+  }
+
+  const auto nodeIt = nodes_.find(id);
   if (nodeIt == nodes_.end()) {
     setError(error, "module does not exist: " + name);
     return false;
   }
 
   if (!nodeIt->second.Dependents.empty()) {
-    const auto blockers = toSortedVector(nodeIt->second.Dependents);
+    const auto blockers = idsToSortedNamesUnlocked(nodeIt->second.Dependents);
     setError(error, "cannot delete module " + name + "; active dependents: " + join(blockers));
     return false;
   }
 
-  for (const auto &dependency : nodeIt->second.Dependencies) {
-    auto dependencyIt = nodes_.find(dependency);
+  for (const auto dependencyId : nodeIt->second.Dependencies) {
+    auto dependencyIt = nodes_.find(dependencyId);
     if (dependencyIt != nodes_.end()) {
-      dependencyIt->second.Dependents.erase(name);
+      dependencyIt->second.Dependents.erase(id);
     }
   }
 
+  name_to_id_.erase(nodeIt->second.Name);
   nodes_.erase(nodeIt);
   return true;
 }
@@ -160,66 +166,82 @@ bool LifeTree::forceDeleteWithCascade(const std::string &name,
                                       std::vector<std::string> *deleted,
                                       std::string *error) {
   std::lock_guard<std::mutex> lock(mutex_);
-  std::vector<std::string> order;
-  if (!computeCascadeDeletionOrderUnlocked(name, &order, error)) {
+
+  ModuleId startId = 0;
+  if (!resolveModuleIdUnlocked(name, &startId, error)) {
+    setError(error, "module does not exist: " + name);
     return false;
   }
 
-  for (const auto &nodeName : order) {
-    auto nodeIt = nodes_.find(nodeName);
+  std::vector<ModuleId> order;
+  if (!computeCascadeDeletionOrderUnlocked(startId, &order, error)) {
+    return false;
+  }
+
+  std::vector<std::string> deletedNames;
+  deletedNames.reserve(order.size());
+
+  for (const auto nodeId : order) {
+    auto nodeIt = nodes_.find(nodeId);
     if (nodeIt == nodes_.end()) {
       continue;
     }
 
-    for (const auto &dependency : nodeIt->second.Dependencies) {
-      auto dependencyIt = nodes_.find(dependency);
+    deletedNames.push_back(nodeIt->second.Name);
+
+    for (const auto dependencyId : nodeIt->second.Dependencies) {
+      auto dependencyIt = nodes_.find(dependencyId);
       if (dependencyIt != nodes_.end()) {
-        dependencyIt->second.Dependents.erase(nodeName);
+        dependencyIt->second.Dependents.erase(nodeId);
       }
     }
+
+    name_to_id_.erase(nodeIt->second.Name);
     nodes_.erase(nodeIt);
   }
 
   if (deleted != nullptr) {
-    *deleted = order;
+    *deleted = std::move(deletedNames);
   }
   return true;
 }
 
 std::vector<std::string> LifeTree::topologicalOrder(std::string *error) const {
   std::lock_guard<std::mutex> lock(mutex_);
-  std::unordered_map<std::string, int> indegrees;
-  for (const auto &[name, node] : nodes_) {
-    indegrees.emplace(name, static_cast<int>(node.Dependencies.size()));
+
+  std::unordered_map<ModuleId, int> indegrees;
+  for (const auto &[id, node] : nodes_) {
+    indegrees.emplace(id, static_cast<int>(node.Dependencies.size()));
   }
 
-  std::queue<std::string> ready;
-  for (const auto &[name, indegree] : indegrees) {
+  std::queue<ModuleId> ready;
+  for (const auto &[id, indegree] : indegrees) {
     if (indegree == 0) {
-      ready.push(name);
+      ready.push(id);
     }
   }
 
   std::vector<std::string> order;
   order.reserve(nodes_.size());
-  while (!ready.empty()) {
-    auto current = ready.front();
-    ready.pop();
-    order.push_back(current);
 
-    auto nodeIt = nodes_.find(current);
+  while (!ready.empty()) {
+    const auto currentId = ready.front();
+    ready.pop();
+
+    const auto nodeIt = nodes_.find(currentId);
     if (nodeIt == nodes_.end()) {
       continue;
     }
+    order.push_back(nodeIt->second.Name);
 
-    for (const auto &dependent : nodeIt->second.Dependents) {
-      auto indegreeIt = indegrees.find(dependent);
+    for (const auto dependentId : nodeIt->second.Dependents) {
+      auto indegreeIt = indegrees.find(dependentId);
       if (indegreeIt == indegrees.end()) {
         continue;
       }
       --indegreeIt->second;
       if (indegreeIt->second == 0) {
-        ready.push(dependent);
+        ready.push(dependentId);
       }
     }
   }
@@ -234,40 +256,50 @@ std::vector<std::string> LifeTree::topologicalOrder(std::string *error) const {
 
 std::vector<std::string> LifeTree::getDependencies(const std::string &name, std::string *error) const {
   std::lock_guard<std::mutex> lock(mutex_);
-  auto nodeIt = nodes_.find(name);
-  if (nodeIt == nodes_.end()) {
+
+  ModuleId id = 0;
+  if (!resolveModuleIdUnlocked(name, &id, error)) {
     setError(error, "module does not exist: " + name);
     return {};
   }
-  return toSortedVector(nodeIt->second.Dependencies);
+
+  return idsToSortedNamesUnlocked(nodes_.at(id).Dependencies);
 }
 
 std::vector<std::string> LifeTree::getDependents(const std::string &name, std::string *error) const {
   std::lock_guard<std::mutex> lock(mutex_);
-  auto nodeIt = nodes_.find(name);
-  if (nodeIt == nodes_.end()) {
+
+  ModuleId id = 0;
+  if (!resolveModuleIdUnlocked(name, &id, error)) {
     setError(error, "module does not exist: " + name);
     return {};
   }
-  return toSortedVector(nodeIt->second.Dependents);
+
+  return idsToSortedNamesUnlocked(nodes_.at(id).Dependents);
 }
 
 std::vector<std::string> LifeTree::transitiveDependencies(const std::string &name, std::string *error) const {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (!moduleExistsUnlocked(name)) {
+
+  ModuleId id = 0;
+  if (!resolveModuleIdUnlocked(name, &id, error)) {
     setError(error, "module does not exist: " + name);
     return {};
   }
-  return traverseUnlocked(name, true);
+
+  return traverseUnlocked(id, true);
 }
 
 std::vector<std::string> LifeTree::transitiveDependents(const std::string &name, std::string *error) const {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (!moduleExistsUnlocked(name)) {
+
+  ModuleId id = 0;
+  if (!resolveModuleIdUnlocked(name, &id, error)) {
     setError(error, "module does not exist: " + name);
     return {};
   }
-  return traverseUnlocked(name, false);
+
+  return traverseUnlocked(id, false);
 }
 
 bool LifeTree::analyzeDelete(const std::string &name, DeleteAnalysis *analysis, std::string *error) const {
@@ -277,57 +309,82 @@ bool LifeTree::analyzeDelete(const std::string &name, DeleteAnalysis *analysis, 
   }
 
   std::lock_guard<std::mutex> lock(mutex_);
-  auto nodeIt = nodes_.find(name);
-  if (nodeIt == nodes_.end()) {
+
+  ModuleId id = 0;
+  if (!resolveModuleIdUnlocked(name, &id, error)) {
     setError(error, "module does not exist: " + name);
     return false;
   }
 
-  analysis->DirectDependents = toSortedVector(nodeIt->second.Dependents);
-  analysis->TransitiveDependents = traverseUnlocked(name, false);
+  const auto &node = nodes_.at(id);
+  analysis->DirectDependents = idsToSortedNamesUnlocked(node.Dependents);
+  analysis->TransitiveDependents = traverseUnlocked(id, false);
   analysis->CanSafelyDelete = analysis->DirectDependents.empty();
 
-  std::vector<std::string> order;
+  std::vector<ModuleId> orderIds;
   std::string localError;
-  if (!computeCascadeDeletionOrderUnlocked(name, &order, &localError)) {
+  if (!computeCascadeDeletionOrderUnlocked(id, &orderIds, &localError)) {
     setError(error, localError);
     return false;
   }
-  analysis->SuggestedCascadeOrder = std::move(order);
+
+  analysis->SuggestedCascadeOrder.clear();
+  analysis->SuggestedCascadeOrder.reserve(orderIds.size());
+  for (const auto nodeId : orderIds) {
+    auto nodeIt = nodes_.find(nodeId);
+    if (nodeIt != nodes_.end()) {
+      analysis->SuggestedCascadeOrder.push_back(nodeIt->second.Name);
+    }
+  }
+
   return true;
 }
 
 bool LifeTree::validateInvariants(std::string *error) const {
   std::lock_guard<std::mutex> lock(mutex_);
 
-  for (const auto &[name, node] : nodes_) {
-    if (node.Name != name) {
-      setError(error, "node key/name mismatch: " + name + " vs " + node.Name);
+  for (const auto &[id, node] : nodes_) {
+    if (node.Id != id) {
+      setError(error, "node key/id mismatch for module: " + node.Name);
       return false;
     }
 
-    for (const auto &dependency : node.Dependencies) {
-      auto dependencyIt = nodes_.find(dependency);
+    auto nameIt = name_to_id_.find(node.Name);
+    if (nameIt == name_to_id_.end() || nameIt->second != id) {
+      setError(error, "name-to-id mapping mismatch for module: " + node.Name);
+      return false;
+    }
+
+    for (const auto dependencyId : node.Dependencies) {
+      auto dependencyIt = nodes_.find(dependencyId);
       if (dependencyIt == nodes_.end()) {
-        setError(error, "missing dependency node: " + dependency + " referenced by " + name);
+        setError(error, "missing dependency node for module: " + node.Name);
         return false;
       }
-      if (dependencyIt->second.Dependents.find(name) == dependencyIt->second.Dependents.end()) {
-        setError(error, "dependency back-link missing for edge " + name + " -> " + dependency);
+      if (dependencyIt->second.Dependents.find(id) == dependencyIt->second.Dependents.end()) {
+        setError(error, "dependency back-link missing for edge " + node.Name + " -> " + dependencyIt->second.Name);
         return false;
       }
     }
 
-    for (const auto &dependent : node.Dependents) {
-      auto dependentIt = nodes_.find(dependent);
+    for (const auto dependentId : node.Dependents) {
+      auto dependentIt = nodes_.find(dependentId);
       if (dependentIt == nodes_.end()) {
-        setError(error, "missing dependent node: " + dependent + " for " + name);
+        setError(error, "missing dependent node for module: " + node.Name);
         return false;
       }
-      if (dependentIt->second.Dependencies.find(name) == dependentIt->second.Dependencies.end()) {
-        setError(error, "dependent forward-link missing for edge " + dependent + " -> " + name);
+      if (dependentIt->second.Dependencies.find(id) == dependentIt->second.Dependencies.end()) {
+        setError(error, "dependent forward-link missing for edge " + dependentIt->second.Name + " -> " + node.Name);
         return false;
       }
+    }
+  }
+
+  for (const auto &[name, id] : name_to_id_) {
+    auto nodeIt = nodes_.find(id);
+    if (nodeIt == nodes_.end() || nodeIt->second.Name != name) {
+      setError(error, "id-to-name mapping mismatch for module: " + name);
+      return false;
     }
   }
 
@@ -336,6 +393,7 @@ bool LifeTree::validateInvariants(std::string *error) const {
 
 GraphStats LifeTree::stats() const {
   std::lock_guard<std::mutex> lock(mutex_);
+
   GraphStats stats;
   stats.Modules = nodes_.size();
   for (const auto &[_, node] : nodes_) {
@@ -347,60 +405,68 @@ GraphStats LifeTree::stats() const {
       ++stats.Leaves;
     }
   }
+
   return stats;
 }
 
 std::vector<std::string> LifeTree::roots() const {
   std::lock_guard<std::mutex> lock(mutex_);
-  std::set<std::string> roots;
-  for (const auto &[name, node] : nodes_) {
+
+  std::unordered_set<ModuleId> rootIds;
+  for (const auto &[id, node] : nodes_) {
     if (node.Dependencies.empty()) {
-      roots.insert(name);
+      rootIds.insert(id);
     }
   }
-  return toSortedVector(roots);
+
+  return idsToSortedNamesUnlocked(rootIds);
 }
 
 std::vector<std::string> LifeTree::leaves() const {
   std::lock_guard<std::mutex> lock(mutex_);
-  std::set<std::string> leaves;
-  for (const auto &[name, node] : nodes_) {
+
+  std::unordered_set<ModuleId> leafIds;
+  for (const auto &[id, node] : nodes_) {
     if (node.Dependents.empty()) {
-      leaves.insert(name);
+      leafIds.insert(id);
     }
   }
-  return toSortedVector(leaves);
+
+  return idsToSortedNamesUnlocked(leafIds);
 }
 
 std::vector<std::string> LifeTree::isolatedModules() const {
   std::lock_guard<std::mutex> lock(mutex_);
-  std::set<std::string> isolated;
-  for (const auto &[name, node] : nodes_) {
+
+  std::unordered_set<ModuleId> isolatedIds;
+  for (const auto &[id, node] : nodes_) {
     if (node.Dependencies.empty() && node.Dependents.empty()) {
-      isolated.insert(name);
+      isolatedIds.insert(id);
     }
   }
-  return toSortedVector(isolated);
+
+  return idsToSortedNamesUnlocked(isolatedIds);
 }
 
 std::string LifeTree::toDot() const {
   std::lock_guard<std::mutex> lock(mutex_);
+
   std::ostringstream stream;
   stream << "digraph LifeTree {\n";
   stream << "  rankdir=LR;\n";
   stream << "  node [shape=box, style=rounded];\n";
 
-  std::set<std::string> names;
-  for (const auto &[name, _] : nodes_) {
-    names.insert(name);
+  const auto sortedIds = sortedNodeIdsByNameUnlocked();
+
+  for (const auto id : sortedIds) {
+    stream << "  \"" << nodes_.at(id).Name << "\";\n";
   }
-  for (const auto &name : names) {
-    stream << "  \"" << name << "\";\n";
-  }
-  for (const auto &[name, node] : nodes_) {
-    const auto dependencies = toSortedVector(node.Dependencies);
-    for (const auto &dependency : dependencies) {
-      stream << "  \"" << name << "\" -> \"" << dependency << "\";\n";
+
+  for (const auto id : sortedIds) {
+    const auto &node = nodes_.at(id);
+    const auto dependencies = idsToSortedNamesUnlocked(node.Dependencies);
+    for (const auto &dependencyName : dependencies) {
+      stream << "  \"" << node.Name << "\" -> \"" << dependencyName << "\";\n";
     }
   }
 
@@ -410,7 +476,7 @@ std::string LifeTree::toDot() const {
 
 bool LifeTree::hasModule(const std::string &name) const {
   std::lock_guard<std::mutex> lock(mutex_);
-  return nodes_.find(name) != nodes_.end();
+  return moduleExistsUnlocked(name);
 }
 
 std::size_t LifeTree::moduleCount() const {
@@ -420,6 +486,7 @@ std::size_t LifeTree::moduleCount() const {
 
 std::size_t LifeTree::dependencyEdgeCount() const {
   std::lock_guard<std::mutex> lock(mutex_);
+
   std::size_t count = 0;
   for (const auto &[_, node] : nodes_) {
     count += node.Dependencies.size();
@@ -427,19 +494,60 @@ std::size_t LifeTree::dependencyEdgeCount() const {
   return count;
 }
 
-bool LifeTree::moduleExistsUnlocked(const std::string &name) const {
-  return nodes_.find(name) != nodes_.end();
+bool LifeTree::resolveModuleIdUnlocked(const std::string &name, ModuleId *id, std::string *error) const {
+  auto it = name_to_id_.find(name);
+  if (it == name_to_id_.end()) {
+    setError(error, "module does not exist: " + name);
+    return false;
+  }
+
+  if (id != nullptr) {
+    *id = it->second;
+  }
+  return true;
 }
 
-std::vector<std::string> LifeTree::traverseUnlocked(const std::string &start, bool followDependencies) const {
-  std::set<std::string> visited;
-  std::queue<std::string> pending;
+bool LifeTree::moduleExistsUnlocked(const std::string &name) const {
+  return name_to_id_.find(name) != name_to_id_.end();
+}
+
+std::vector<ModuleId> LifeTree::sortedNodeIdsByNameUnlocked() const {
+  std::vector<ModuleId> ids;
+  ids.reserve(nodes_.size());
+  for (const auto &[id, _] : nodes_) {
+    ids.push_back(id);
+  }
+
+  std::sort(ids.begin(), ids.end(), [this](ModuleId left, ModuleId right) {
+    return nodes_.at(left).Name < nodes_.at(right).Name;
+  });
+  return ids;
+}
+
+std::vector<std::string> LifeTree::idsToSortedNamesUnlocked(const std::unordered_set<ModuleId> &ids) const {
+  std::vector<std::string> names;
+  names.reserve(ids.size());
+
+  for (const auto id : ids) {
+    auto nodeIt = nodes_.find(id);
+    if (nodeIt != nodes_.end()) {
+      names.push_back(nodeIt->second.Name);
+    }
+  }
+
+  std::sort(names.begin(), names.end());
+  return names;
+}
+
+std::vector<std::string> LifeTree::traverseUnlocked(ModuleId start, bool followDependencies) const {
+  std::unordered_set<ModuleId> visited;
+  std::queue<ModuleId> pending;
   pending.push(start);
   visited.insert(start);
 
-  std::set<std::string> result;
+  std::unordered_set<ModuleId> result;
   while (!pending.empty()) {
-    auto current = pending.front();
+    const auto current = pending.front();
     pending.pop();
 
     auto nodeIt = nodes_.find(current);
@@ -448,23 +556,24 @@ std::vector<std::string> LifeTree::traverseUnlocked(const std::string &start, bo
     }
 
     const auto &next = followDependencies ? nodeIt->second.Dependencies : nodeIt->second.Dependents;
-    for (const auto &name : next) {
-      if (visited.find(name) != visited.end()) {
+    for (const auto neighborId : next) {
+      if (visited.find(neighborId) != visited.end()) {
         continue;
       }
-      visited.insert(name);
-      result.insert(name);
-      pending.push(name);
+      visited.insert(neighborId);
+      result.insert(neighborId);
+      pending.push(neighborId);
     }
   }
-  return toSortedVector(result);
+
+  return idsToSortedNamesUnlocked(result);
 }
 
-bool LifeTree::computeCascadeDeletionOrderUnlocked(const std::string &name,
-                                                   std::vector<std::string> *order,
+bool LifeTree::computeCascadeDeletionOrderUnlocked(ModuleId start,
+                                                   std::vector<ModuleId> *order,
                                                    std::string *error) const {
-  if (!moduleExistsUnlocked(name)) {
-    setError(error, "module does not exist: " + name);
+  if (nodes_.find(start) == nodes_.end()) {
+    setError(error, "module does not exist");
     return false;
   }
   if (order == nullptr) {
@@ -472,10 +581,10 @@ bool LifeTree::computeCascadeDeletionOrderUnlocked(const std::string &name,
     return false;
   }
 
-  std::set<std::string> closure;
-  std::queue<std::string> pending;
-  pending.push(name);
-  closure.insert(name);
+  std::unordered_set<ModuleId> closure;
+  std::queue<ModuleId> pending;
+  pending.push(start);
+  closure.insert(start);
 
   while (!pending.empty()) {
     const auto current = pending.front();
@@ -485,63 +594,69 @@ bool LifeTree::computeCascadeDeletionOrderUnlocked(const std::string &name,
     if (nodeIt == nodes_.end()) {
       continue;
     }
-    for (const auto &dependent : nodeIt->second.Dependents) {
-      if (closure.insert(dependent).second) {
-        pending.push(dependent);
+
+    for (const auto dependentId : nodeIt->second.Dependents) {
+      if (closure.insert(dependentId).second) {
+        pending.push(dependentId);
       }
     }
   }
 
-  std::unordered_map<std::string, int> activeDependents;
-  for (const auto &module : closure) {
-    activeDependents.emplace(module, 0);
+  std::unordered_map<ModuleId, int> activeDependents;
+  for (const auto id : closure) {
+    activeDependents.emplace(id, 0);
   }
-  for (const auto &module : closure) {
-    auto nodeIt = nodes_.find(module);
+
+  for (const auto id : closure) {
+    auto nodeIt = nodes_.find(id);
     if (nodeIt == nodes_.end()) {
       continue;
     }
 
     int count = 0;
-    for (const auto &dependent : nodeIt->second.Dependents) {
-      if (closure.find(dependent) != closure.end()) {
+    for (const auto dependentId : nodeIt->second.Dependents) {
+      if (closure.find(dependentId) != closure.end()) {
         ++count;
       }
     }
-    activeDependents[module] = count;
+    activeDependents[id] = count;
   }
 
-  std::priority_queue<std::string, std::vector<std::string>, std::greater<>> ready;
-  for (const auto &[module, count] : activeDependents) {
+  std::set<std::pair<std::string, ModuleId>> ready;
+  for (const auto &[id, count] : activeDependents) {
     if (count == 0) {
-      ready.push(module);
+      ready.emplace(nodes_.at(id).Name, id);
     }
   }
 
-  std::vector<std::string> deletionOrder;
+  std::vector<ModuleId> deletionOrder;
   deletionOrder.reserve(closure.size());
-  while (!ready.empty()) {
-    auto current = ready.top();
-    ready.pop();
-    deletionOrder.push_back(current);
 
-    auto nodeIt = nodes_.find(current);
+  while (!ready.empty()) {
+    auto currentIt = ready.begin();
+    const auto currentId = currentIt->second;
+    ready.erase(currentIt);
+
+    deletionOrder.push_back(currentId);
+
+    auto nodeIt = nodes_.find(currentId);
     if (nodeIt == nodes_.end()) {
       continue;
     }
 
-    for (const auto &dependency : nodeIt->second.Dependencies) {
-      if (closure.find(dependency) == closure.end()) {
+    for (const auto dependencyId : nodeIt->second.Dependencies) {
+      if (closure.find(dependencyId) == closure.end()) {
         continue;
       }
 
-      auto countIt = activeDependents.find(dependency);
+      auto countIt = activeDependents.find(dependencyId);
       if (countIt == activeDependents.end()) {
         continue;
       }
+
       --countIt->second;
       if (countIt->second == 0) {
-        ready.push(dependency);
+        ready.emplace(nodes_.at(dependencyId).Name, dependencyId);
       }
     }
   }
@@ -555,9 +670,9 @@ bool LifeTree::computeCascadeDeletionOrderUnlocked(const std::string &name,
   return true;
 }
 
-bool LifeTree::wouldCreateCycleUnlocked(const std::string &from, const std::string &to) const {
-  std::unordered_set<std::string> visited;
-  std::stack<std::string> pending;
+bool LifeTree::wouldCreateCycleUnlocked(ModuleId from, ModuleId to) const {
+  std::unordered_set<ModuleId> visited;
+  std::stack<ModuleId> pending;
   pending.push(to);
 
   while (!pending.empty()) {
@@ -575,9 +690,10 @@ bool LifeTree::wouldCreateCycleUnlocked(const std::string &from, const std::stri
     if (nodeIt == nodes_.end()) {
       continue;
     }
-    for (const auto &dependency : nodeIt->second.Dependencies) {
-      if (visited.find(dependency) == visited.end()) {
-        pending.push(dependency);
+
+    for (const auto dependencyId : nodeIt->second.Dependencies) {
+      if (visited.find(dependencyId) == visited.end()) {
+        pending.push(dependencyId);
       }
     }
   }
