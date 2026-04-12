@@ -71,7 +71,10 @@ lifetree/
 |-- CMakeLists.txt
 |-- README.md
 |-- TEST_RESULTS.md
+|-- BENCHMARK_RESULTS.md
 |-- PHASE1.md
+|-- benchmarks/
+|   |-- lifetree_bench.cpp
 |-- include/
 |   |-- lifetree.h
 |-- src/
@@ -92,6 +95,15 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/lifetree_demo
 ```
+
+### Benchmark
+
+```bash
+g++ -O2 -std=c++17 -Wall -Wextra -Wpedantic -Iinclude src/lifetree.cpp benchmarks/lifetree_bench.cpp -o build/lifetree_bench
+./build/lifetree_bench
+```
+
+Checked-in benchmark notes and baseline numbers are in `BENCHMARK_RESULTS.md`.
 
 ### Direct compiler invocation
 
