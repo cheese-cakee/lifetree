@@ -15,6 +15,7 @@ using ModuleId = std::uint64_t;
 struct Node {
   ModuleId Id = 0;
   std::string Name;
+  bool IsRegistered = true;
   std::unordered_set<ModuleId> Dependencies;
   std::unordered_set<ModuleId> Dependents;
 };
@@ -36,6 +37,10 @@ struct GraphStats {
 class LifeTree {
 public:
   bool addModule(const std::string &name, std::string *error = nullptr);
+  bool unregisterModule(const std::string &name,
+                        ModuleId *unregisteredId = nullptr,
+                        std::string *error = nullptr);
+  bool destroyModule(ModuleId id, std::string *error = nullptr);
   bool addDependency(const std::string &from, const std::string &to, std::string *error = nullptr);
   bool removeDependency(const std::string &from, const std::string &to, std::string *error = nullptr);
 
@@ -69,6 +74,7 @@ public:
 private:
   bool resolveModuleIdUnlocked(const std::string &name, ModuleId *id, std::string *error) const;
   bool moduleExistsUnlocked(const std::string &name) const;
+  bool destroyModuleUnlocked(ModuleId id, std::string *error);
 
   std::vector<ModuleId> sortedNodeIdsByNameUnlocked() const;
   std::vector<std::string> idsToSortedNamesUnlocked(const std::unordered_set<ModuleId> &ids) const;
