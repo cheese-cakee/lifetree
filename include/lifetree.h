@@ -72,6 +72,7 @@ public:
   std::vector<std::string> leaves() const;
   std::vector<std::string> isolatedModules() const;
   std::string toDot() const;
+  std::string toJson() const;
 
   bool hasModule(const std::string &name) const;
   std::size_t registeredModuleCount() const;

@@ -260,6 +260,34 @@ void testInvariantValidation() {
   expectTrue(tree.validateInvariants(&error), "invariants should hold");
 }
 
+void testJsonExport() {
+  lifetree::LifeTree tree;
+  std::string error;
+
+  expectTrue(tree.addModule("A", &error), "add A");
+  expectTrue(tree.addModule("B", &error), "add B");
+  expectTrue(tree.addDependency("B", "A", &error), "B->A");
+
+  lifetree::ModuleId aId = 0;
+  expectTrue(tree.lookupModuleId("A", &aId, &error), "lookup A id");
+  expectTrue(tree.unregisterModule("A", nullptr, &error), "unregister A");
+
+  const std::string json = tree.toJson();
+  expectTrue(json.find("\"graph\": \"LifeTree\"") != std::string::npos, "json graph tag exists");
+  expectTrue(json.find("\"name\": \"A\"") != std::string::npos, "json contains A module");
+  expectTrue(json.find("\"name\": \"B\"") != std::string::npos, "json contains B module");
+  expectTrue(json.find("\"is_registered\": false") != std::string::npos, "json reflects unregistered module");
+  expectTrue(json.find("\"dependencies\": [\"A\"]") != std::string::npos, "json includes dependency by name");
+  expectTrue(json.find("\"registered_modules\": 1") != std::string::npos, "json stats include registered count");
+  expectTrue(json.find("\"dependency_edges\": 1") != std::string::npos, "json stats include edge count");
+
+  const std::string jsonAgain = tree.toJson();
+  expectTrue(json == jsonAgain, "json export should be deterministic");
+
+  expectTrue(tree.deleteModule("B", &error), "delete B should succeed before destroying deferred A");
+  expectTrue(tree.destroyModule(aId, &error), "destroy deferred A should still work after json export");
+}
+
 void testUnregisterAndDestroyLifecycle() {
   lifetree::LifeTree tree;
   std::string error;
@@ -378,6 +406,7 @@ int main() {
   testCascadeDelete();
   testStatsAndTopologyHelpers();
   testInvariantValidation();
+  testJsonExport();
   testUnregisterAndDestroyLifecycle();
   testLifecycleObservabilityById();
   testDeleteContractNonMutatingWhenBlocked();

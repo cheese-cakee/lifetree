@@ -16,6 +16,39 @@ void setError(std::string *error, const std::string &message) {
   }
 }
 
+std::string jsonEscape(const std::string &value) {
+  std::ostringstream stream;
+  for (const char ch : value) {
+    switch (ch) {
+      case '\"':
+        stream << "\\\"";
+        break;
+      case '\\':
+        stream << "\\\\";
+        break;
+      case '\b':
+        stream << "\\b";
+        break;
+      case '\f':
+        stream << "\\f";
+        break;
+      case '\n':
+        stream << "\\n";
+        break;
+      case '\r':
+        stream << "\\r";
+        break;
+      case '\t':
+        stream << "\\t";
+        break;
+      default:
+        stream << ch;
+        break;
+    }
+  }
+  return stream.str();
+}
+
 } // namespace
 
 bool LifeTree::addModule(const std::string &name, std::string *error) {
@@ -552,6 +585,66 @@ std::string LifeTree::toDot() const {
     }
   }
 
+  stream << "}\n";
+  return stream.str();
+}
+
+std::string LifeTree::toJson() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  std::size_t edgeCount = 0;
+  for (const auto &[_, node] : nodes_) {
+    edgeCount += node.Dependencies.size();
+  }
+
+  std::ostringstream stream;
+  stream << "{\n";
+  stream << "  \"graph\": \"LifeTree\",\n";
+  stream << "  \"modules\": [\n";
+
+  const auto sortedIds = sortedNodeIdsByNameUnlocked();
+  for (std::size_t index = 0; index < sortedIds.size(); ++index) {
+    const ModuleId id = sortedIds[index];
+    const auto &node = nodes_.at(id);
+
+    stream << "    {\n";
+    stream << "      \"id\": " << id << ",\n";
+    stream << "      \"name\": \"" << jsonEscape(node.Name) << "\",\n";
+    stream << "      \"is_registered\": " << (node.IsRegistered ? "true" : "false") << ",\n";
+
+    const auto dependencies = idsToSortedNamesUnlocked(node.Dependencies);
+    stream << "      \"dependencies\": [";
+    for (std::size_t depIndex = 0; depIndex < dependencies.size(); ++depIndex) {
+      if (depIndex != 0) {
+        stream << ", ";
+      }
+      stream << "\"" << jsonEscape(dependencies[depIndex]) << "\"";
+    }
+    stream << "],\n";
+
+    const auto dependents = idsToSortedNamesUnlocked(node.Dependents);
+    stream << "      \"dependents\": [";
+    for (std::size_t depIndex = 0; depIndex < dependents.size(); ++depIndex) {
+      if (depIndex != 0) {
+        stream << ", ";
+      }
+      stream << "\"" << jsonEscape(dependents[depIndex]) << "\"";
+    }
+    stream << "]\n";
+
+    stream << "    }";
+    if (index + 1 != sortedIds.size()) {
+      stream << ",";
+    }
+    stream << "\n";
+  }
+
+  stream << "  ],\n";
+  stream << "  \"stats\": {\n";
+  stream << "    \"modules\": " << nodes_.size() << ",\n";
+  stream << "    \"registered_modules\": " << name_to_id_.size() << ",\n";
+  stream << "    \"dependency_edges\": " << edgeCount << "\n";
+  stream << "  }\n";
   stream << "}\n";
   return stream.str();
 }

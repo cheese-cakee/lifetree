@@ -61,6 +61,7 @@ LifeTree explores that problem directly with:
 - topological ordering
 - roots, leaves, isolated-node, and edge-count helpers
 - Graphviz DOT export
+- deterministic JSON export for tooling integration
 - invariant validation for edge consistency
 
 ## Project Layout
