@@ -18,6 +18,8 @@ endif()
 
 add_executable(lifetree_demo src/demo.cpp)
 target_link_libraries(lifetree_demo PRIVATE lifetree)
+add_executable(lifetree_runtime_example src/runtime_plugin_example.cpp)
+target_link_libraries(lifetree_runtime_example PRIVATE lifetree)
 
 add_executable(lifetree_tests tests/lifetree_tests.cpp)
 target_link_libraries(lifetree_tests PRIVATE lifetree)

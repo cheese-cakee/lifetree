@@ -9,7 +9,7 @@ LifeTree is a small C++ library for modeling dependency relationships between ru
 - What is the minimal safe deletion order?
 - Which invariants should always hold after graph mutation?
 
-The current codebase is intentionally compact. The focus is correctness, determinism, and inspectability rather than framework-heavy abstraction.
+The focus is correctness, determinism, and inspectability for production lifecycle control paths.
 
 ## Why This Exists
 
@@ -23,7 +23,7 @@ LifeTree explores that problem directly with:
 - cycle rejection on mutation
 - invariant validation for debugging and tests
 
-## Current Capabilities
+## Capabilities
 
 ### Graph mutation
 
@@ -72,7 +72,6 @@ lifetree/
 |-- README.md
 |-- TEST_RESULTS.md
 |-- BENCHMARK_RESULTS.md
-|-- PHASE1.md
 |-- benchmarks/
 |   |-- lifetree_bench.cpp
 |-- include/
@@ -80,8 +79,10 @@ lifetree/
 |-- src/
 |   |-- lifetree.cpp
 |   |-- demo.cpp
+|   |-- runtime_plugin_example.cpp
 |-- tests/
 |   |-- lifetree_tests.cpp
+|   |-- lifetree_stress_tests.cpp
 |-- .gitignore
 ```
 
@@ -94,6 +95,8 @@ cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/lifetree_demo
+./build/lifetree_runtime_example
+./build/lifetree_bench
 ```
 
 ### Benchmark
@@ -117,7 +120,7 @@ g++ -std=c++17 -Wall -Wextra -Wpedantic -Iinclude src/lifetree.cpp tests/lifetre
 
 ## Test Coverage
 
-The current test suite covers:
+The test suite covers:
 
 1. module add, duplicate handling, and invalid input
 2. linear dependency deletion constraints
@@ -137,32 +140,3 @@ The current test suite covers:
 16. randomized mutation stress coverage with invariant checks (fixed seeds)
 
 The latest local run result is recorded in `TEST_RESULTS.md`.
-
-## Intended Direction
-
-LifeTree is being developed as a standalone systems project rather than as a runtime-specific patch set. The current implementation keeps the model small on purpose. The next stage is described in `PHASE1.md`.
-
-## Roadmap
-
-### Phase 1 (core lifecycle model) - In Progress
-
-- stable `ModuleId` identity split from display name
-- explicit unregister vs destroy lifecycle semantics
-- deferred lifecycle state with ID-based observability
-- remaining: JSON export, randomized stress tests, benchmark target, additional integration example
-
-### Phase 2 (performance and reliability) - Planned
-
-- deterministic microbenchmarks for core operations
-- randomized/stress mutation testing with invariant checks
-- cross-platform CI matrix and verification profiles
-
-### Phase 3 (packaging and showcase quality) - Planned
-
-- structured JSON export + richer diagnostics
-- production-style runtime integration example
-- publish-ready documentation and reusable library packaging
-
-## Scope
-
-This repository currently demonstrates the core lifecycle-safety model in a compact form. It is not yet a full runtime integration layer.
