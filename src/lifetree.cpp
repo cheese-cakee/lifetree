@@ -16,17 +16,6 @@ void setError(std::string *error, const std::string &message) {
   }
 }
 
-std::string join(const std::vector<std::string> &items) {
-  std::ostringstream stream;
-  for (std::size_t index = 0; index < items.size(); ++index) {
-    if (index != 0) {
-      stream << ", ";
-    }
-    stream << items[index];
-  }
-  return stream.str();
-}
-
 } // namespace
 
 bool LifeTree::addModule(const std::string &name, std::string *error) {
@@ -42,9 +31,43 @@ bool LifeTree::addModule(const std::string &name, std::string *error) {
   }
 
   const ModuleId id = next_module_id_++;
-  nodes_.emplace(id, Node{id, name, {}, {}});
+  nodes_.emplace(id, Node{id, name, true, {}, {}});
   name_to_id_.emplace(name, id);
   return true;
+}
+
+bool LifeTree::unregisterModule(const std::string &name,
+                                ModuleId *unregisteredId,
+                                std::string *error) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  ModuleId id = 0;
+  if (!resolveModuleIdUnlocked(name, &id, error)) {
+    setError(error, "module does not exist: " + name);
+    return false;
+  }
+
+  auto nodeIt = nodes_.find(id);
+  if (nodeIt == nodes_.end()) {
+    setError(error, "module does not exist: " + name);
+    return false;
+  }
+  if (!nodeIt->second.IsRegistered) {
+    setError(error, "module is already unregistered: " + name);
+    return false;
+  }
+
+  nodeIt->second.IsRegistered = false;
+  name_to_id_.erase(name);
+  if (unregisteredId != nullptr) {
+    *unregisteredId = id;
+  }
+  return true;
+}
+
+bool LifeTree::destroyModule(ModuleId id, std::string *error) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return destroyModuleUnlocked(id, error);
 }
 
 bool LifeTree::addDependency(const std::string &from, const std::string &to, std::string *error) {
@@ -143,23 +166,14 @@ bool LifeTree::deleteModule(const std::string &name, std::string *error) {
     setError(error, "module does not exist: " + name);
     return false;
   }
-
-  if (!nodeIt->second.Dependents.empty()) {
-    const auto blockers = idsToSortedNamesUnlocked(nodeIt->second.Dependents);
-    setError(error, "cannot delete module " + name + "; active dependents: " + join(blockers));
+  if (!nodeIt->second.IsRegistered) {
+    setError(error, "module is unregistered: " + name);
     return false;
   }
 
-  for (const auto dependencyId : nodeIt->second.Dependencies) {
-    auto dependencyIt = nodes_.find(dependencyId);
-    if (dependencyIt != nodes_.end()) {
-      dependencyIt->second.Dependents.erase(id);
-    }
-  }
-
-  name_to_id_.erase(nodeIt->second.Name);
-  nodes_.erase(nodeIt);
-  return true;
+  name_to_id_.erase(name);
+  nodeIt->second.IsRegistered = false;
+  return destroyModuleUnlocked(id, error);
 }
 
 bool LifeTree::forceDeleteWithCascade(const std::string &name,
@@ -188,6 +202,10 @@ bool LifeTree::forceDeleteWithCascade(const std::string &name,
     }
 
     deletedNames.push_back(nodeIt->second.Name);
+    if (nodeIt->second.IsRegistered) {
+      name_to_id_.erase(nodeIt->second.Name);
+      nodeIt->second.IsRegistered = false;
+    }
 
     for (const auto dependencyId : nodeIt->second.Dependencies) {
       auto dependencyIt = nodes_.find(dependencyId);
@@ -196,7 +214,6 @@ bool LifeTree::forceDeleteWithCascade(const std::string &name,
       }
     }
 
-    name_to_id_.erase(nodeIt->second.Name);
     nodes_.erase(nodeIt);
   }
 
@@ -350,9 +367,16 @@ bool LifeTree::validateInvariants(std::string *error) const {
     }
 
     auto nameIt = name_to_id_.find(node.Name);
-    if (nameIt == name_to_id_.end() || nameIt->second != id) {
-      setError(error, "name-to-id mapping mismatch for module: " + node.Name);
-      return false;
+    if (node.IsRegistered) {
+      if (nameIt == name_to_id_.end() || nameIt->second != id) {
+        setError(error, "name-to-id mapping mismatch for registered module: " + node.Name);
+        return false;
+      }
+    } else {
+      if (nameIt != name_to_id_.end()) {
+        setError(error, "unregistered module is still name-visible: " + node.Name);
+        return false;
+      }
     }
 
     for (const auto dependencyId : node.Dependencies) {
@@ -382,7 +406,7 @@ bool LifeTree::validateInvariants(std::string *error) const {
 
   for (const auto &[name, id] : name_to_id_) {
     auto nodeIt = nodes_.find(id);
-    if (nodeIt == nodes_.end() || nodeIt->second.Name != name) {
+    if (nodeIt == nodes_.end() || nodeIt->second.Name != name || !nodeIt->second.IsRegistered) {
       setError(error, "id-to-name mapping mismatch for module: " + name);
       return false;
     }
@@ -492,6 +516,41 @@ std::size_t LifeTree::dependencyEdgeCount() const {
     count += node.Dependencies.size();
   }
   return count;
+}
+
+bool LifeTree::destroyModuleUnlocked(ModuleId id, std::string *error) {
+  auto nodeIt = nodes_.find(id);
+  if (nodeIt == nodes_.end()) {
+    setError(error, "module does not exist");
+    return false;
+  }
+  if (nodeIt->second.IsRegistered) {
+    setError(error, "module is still registered: " + nodeIt->second.Name);
+    return false;
+  }
+  if (!nodeIt->second.Dependents.empty()) {
+    const auto blockers = idsToSortedNamesUnlocked(nodeIt->second.Dependents);
+    std::ostringstream stream;
+    stream << "cannot destroy module " << nodeIt->second.Name << "; active dependents: ";
+    for (std::size_t index = 0; index < blockers.size(); ++index) {
+      if (index != 0) {
+        stream << ", ";
+      }
+      stream << blockers[index];
+    }
+    setError(error, stream.str());
+    return false;
+  }
+
+  for (const auto dependencyId : nodeIt->second.Dependencies) {
+    auto dependencyIt = nodes_.find(dependencyId);
+    if (dependencyIt != nodes_.end()) {
+      dependencyIt->second.Dependents.erase(id);
+    }
+  }
+
+  nodes_.erase(nodeIt);
+  return true;
 }
 
 bool LifeTree::resolveModuleIdUnlocked(const std::string &name, ModuleId *id, std::string *error) const {
