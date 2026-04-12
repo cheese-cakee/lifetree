@@ -128,6 +128,27 @@ The latest local run result is recorded in `TEST_RESULTS.md`.
 
 LifeTree is being developed as a standalone systems project rather than as a runtime-specific patch set. The current implementation keeps the model small on purpose. The next stage is described in `PHASE1.md`.
 
+## Roadmap
+
+### Phase 1 (core lifecycle model) - In Progress
+
+- stable `ModuleId` identity split from display name
+- explicit unregister vs destroy lifecycle semantics
+- deferred lifecycle state with ID-based observability
+- remaining: JSON export, randomized stress tests, benchmark target, additional integration example
+
+### Phase 2 (performance and reliability) - Planned
+
+- deterministic microbenchmarks for core operations
+- randomized/stress mutation testing with invariant checks
+- cross-platform CI matrix and verification profiles
+
+### Phase 3 (packaging and showcase quality) - Planned
+
+- structured JSON export + richer diagnostics
+- production-style runtime integration example
+- publish-ready documentation and reusable library packaging
+
 ## Scope
 
 This repository currently demonstrates the core lifecycle-safety model in a compact form. It is not yet a full runtime integration layer.

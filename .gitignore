@@ -3,3 +3,4 @@ build-cmake/
 *.exe
 *.obj
 *.o
+progresslifetree.md
