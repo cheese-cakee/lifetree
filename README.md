@@ -60,8 +60,8 @@ LifeTree explores that problem directly with:
 - transitive dependency and dependent traversal
 - topological ordering
 - roots, leaves, isolated-node, and edge-count helpers
-- Graphviz DOT export
-- deterministic JSON export for tooling integration
+- Graphviz DOT export with stable `ModuleId`-keyed edges
+- deterministic JSON export with both name and id edge references
 - invariant validation for edge consistency
 
 ## Project Layout

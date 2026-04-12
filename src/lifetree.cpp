@@ -574,14 +574,16 @@ std::string LifeTree::toDot() const {
   const auto sortedIds = sortedNodeIdsByNameUnlocked();
 
   for (const auto id : sortedIds) {
-    stream << "  \"" << nodes_.at(id).Name << "\";\n";
+    const auto &node = nodes_.at(id);
+    stream << "  \"id_" << id << "\" [label=\"" << node.Name << " (#" << id << ")\"];\n";
   }
 
   for (const auto id : sortedIds) {
     const auto &node = nodes_.at(id);
-    const auto dependencies = idsToSortedNamesUnlocked(node.Dependencies);
-    for (const auto &dependencyName : dependencies) {
-      stream << "  \"" << node.Name << "\" -> \"" << dependencyName << "\";\n";
+    std::vector<ModuleId> dependencyIds(node.Dependencies.begin(), node.Dependencies.end());
+    std::sort(dependencyIds.begin(), dependencyIds.end());
+    for (const auto dependencyId : dependencyIds) {
+      stream << "  \"id_" << id << "\" -> \"id_" << dependencyId << "\";\n";
     }
   }
 
@@ -613,6 +615,8 @@ std::string LifeTree::toJson() const {
     stream << "      \"is_registered\": " << (node.IsRegistered ? "true" : "false") << ",\n";
 
     const auto dependencies = idsToSortedNamesUnlocked(node.Dependencies);
+    std::vector<ModuleId> dependencyIds(node.Dependencies.begin(), node.Dependencies.end());
+    std::sort(dependencyIds.begin(), dependencyIds.end());
     stream << "      \"dependencies\": [";
     for (std::size_t depIndex = 0; depIndex < dependencies.size(); ++depIndex) {
       if (depIndex != 0) {
@@ -621,14 +625,32 @@ std::string LifeTree::toJson() const {
       stream << "\"" << jsonEscape(dependencies[depIndex]) << "\"";
     }
     stream << "],\n";
+    stream << "      \"dependency_ids\": [";
+    for (std::size_t depIndex = 0; depIndex < dependencyIds.size(); ++depIndex) {
+      if (depIndex != 0) {
+        stream << ", ";
+      }
+      stream << dependencyIds[depIndex];
+    }
+    stream << "],\n";
 
     const auto dependents = idsToSortedNamesUnlocked(node.Dependents);
+    std::vector<ModuleId> dependentIds(node.Dependents.begin(), node.Dependents.end());
+    std::sort(dependentIds.begin(), dependentIds.end());
     stream << "      \"dependents\": [";
     for (std::size_t depIndex = 0; depIndex < dependents.size(); ++depIndex) {
       if (depIndex != 0) {
         stream << ", ";
       }
       stream << "\"" << jsonEscape(dependents[depIndex]) << "\"";
+    }
+    stream << "],\n";
+    stream << "      \"dependent_ids\": [";
+    for (std::size_t depIndex = 0; depIndex < dependentIds.size(); ++depIndex) {
+      if (depIndex != 0) {
+        stream << ", ";
+      }
+      stream << dependentIds[depIndex];
     }
     stream << "]\n";
 

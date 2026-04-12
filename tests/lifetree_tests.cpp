@@ -247,7 +247,12 @@ void testStatsAndTopologyHelpers() {
 
   const auto dot = tree.toDot();
   expectTrue(dot.find("digraph LifeTree") != std::string::npos, "dot header exists");
-  expectTrue(dot.find("\"B\" -> \"A\"") != std::string::npos, "dot contains B->A edge");
+  lifetree::ModuleId aId = 0;
+  lifetree::ModuleId bId = 0;
+  expectTrue(tree.lookupModuleId("A", &aId, &error), "lookup A id for dot check");
+  expectTrue(tree.lookupModuleId("B", &bId, &error), "lookup B id for dot check");
+  const std::string edge = "\"id_" + std::to_string(bId) + "\" -> \"id_" + std::to_string(aId) + "\"";
+  expectTrue(dot.find(edge) != std::string::npos, "dot contains B->A edge by id");
 }
 
 void testInvariantValidation() {
@@ -269,7 +274,9 @@ void testJsonExport() {
   expectTrue(tree.addDependency("B", "A", &error), "B->A");
 
   lifetree::ModuleId aId = 0;
+  lifetree::ModuleId bId = 0;
   expectTrue(tree.lookupModuleId("A", &aId, &error), "lookup A id");
+  expectTrue(tree.lookupModuleId("B", &bId, &error), "lookup B id");
   expectTrue(tree.unregisterModule("A", nullptr, &error), "unregister A");
 
   const std::string json = tree.toJson();
@@ -278,6 +285,10 @@ void testJsonExport() {
   expectTrue(json.find("\"name\": \"B\"") != std::string::npos, "json contains B module");
   expectTrue(json.find("\"is_registered\": false") != std::string::npos, "json reflects unregistered module");
   expectTrue(json.find("\"dependencies\": [\"A\"]") != std::string::npos, "json includes dependency by name");
+  const std::string dependencyIdField = "\"dependency_ids\": [" + std::to_string(aId) + "]";
+  expectTrue(json.find(dependencyIdField) != std::string::npos, "json includes dependency id");
+  const std::string dependentIdField = "\"dependent_ids\": [" + std::to_string(bId) + "]";
+  expectTrue(json.find(dependentIdField) != std::string::npos, "json includes dependent id");
   expectTrue(json.find("\"registered_modules\": 1") != std::string::npos, "json stats include registered count");
   expectTrue(json.find("\"dependency_edges\": 1") != std::string::npos, "json stats include edge count");
 
