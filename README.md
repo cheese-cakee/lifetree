@@ -64,6 +64,44 @@ LifeTree explores that problem directly with:
 - deterministic JSON export with both name and id edge references
 - invariant validation for edge consistency
 
+## Quickstart
+
+```cpp
+#include "lifetree.h"
+#include <iostream>
+
+int main() {
+  lifetree::LifeTree tree;
+  std::string error;
+
+  tree.addModule("runtime", &error);
+  tree.addModule("auth", &error);
+  tree.addModule("api", &error);
+
+  tree.addDependency("auth", "runtime", &error);
+  tree.addDependency("api", "auth", &error);
+
+  lifetree::DeleteAnalysis analysis;
+  tree.analyzeDelete("runtime", &analysis, &error);
+  std::cout << "can delete runtime? " << (analysis.CanSafelyDelete ? "yes" : "no") << "\n";
+
+  tree.deleteModule("api", &error);
+  tree.deleteModule("auth", &error);
+  tree.deleteModule("runtime", &error);
+
+  std::cout << tree.toJson();
+  return 0;
+}
+```
+
+## Why LifeTree (vs Generic Graph Libraries)
+
+- lifecycle-aware semantics, not just graph primitives (`unregister` vs `destroy`)
+- safe-delete contract with blocker diagnostics and deterministic cascade suggestions
+- stable identity model (`ModuleId`) that remains valid across deferred deletion states
+- deterministic exports for tooling (`toDot`, `toJson`) with id-keyed relationships
+- built-in invariant validation and stress-tested mutation behavior
+
 ## Project Layout
 
 ```text
