@@ -38,6 +38,21 @@ LifeTree explores that problem directly with:
 - report direct blockers
 - analyze transitive impact before deletion
 - compute a deterministic dependents-first cascade order
+- explicit `unregisterModule(name)` then `destroyModule(id)` flow
+
+### Deletion contract
+
+- `deleteModule(name)` is non-mutating when blocked by active dependents
+- when allowed, `deleteModule(name)` performs unregister + destroy atomically
+- `unregisterModule(name)` makes a module name-invisible but keeps the node deferred by stable `ModuleId`
+- `destroyModule(id)` requires an unregistered node with no active dependents
+
+### Lifecycle observability
+
+- resolve name to stable id with `lookupModuleId`
+- inspect node state by id with `getModuleById`
+- check lifecycle state with `isModuleRegistered`
+- track current name-visible population with `registeredModuleCount`
 
 ### Inspection and debugging
 
@@ -103,6 +118,9 @@ The current test suite covers:
 10. cascade deletion behavior
 11. graph stats and helper APIs
 12. invariant validation checks
+13. unregister/destroy lifecycle semantics
+14. id-based lifecycle observability semantics
+15. `deleteModule` non-mutation contract when blocked
 
 The latest local run result is recorded in `TEST_RESULTS.md`.
 

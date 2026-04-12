@@ -3,7 +3,7 @@
 ## Last Local Run
 
 Environment: Windows + `g++` (MSYS2 ucrt64)  
-Date: 2026-04-02
+Date: 2026-04-12
 
 ### Command
 
@@ -32,3 +32,6 @@ g++ -std=c++17 -Wall -Wextra -Wpedantic -Iinclude src/lifetree.cpp tests/lifetre
 10. Cascade deletion ordering and execution.
 11. Roots/leaves/isolated/stats helpers.
 12. Internal invariant consistency checks.
+13. Unregister/destroy lifecycle semantics.
+14. ID-based lifecycle observability semantics.
+15. `deleteModule` non-mutation contract when blocked.
