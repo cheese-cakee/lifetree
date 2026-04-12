@@ -297,6 +297,73 @@ void testUnregisterAndDestroyLifecycle() {
   expectTrue(tree.destroyModule(newA, &error), "destroy new A should succeed after unregister");
 }
 
+void testLifecycleObservabilityById() {
+  lifetree::LifeTree tree;
+  std::string error;
+
+  expectTrue(tree.addModule("A", &error), "add A");
+  expectTrue(tree.addModule("B", &error), "add B");
+  expectTrue(tree.addDependency("B", "A", &error), "B->A");
+  expectEqual(tree.registeredModuleCount(), 2U, "registered module count should be 2");
+
+  lifetree::ModuleId aId = 0;
+  expectTrue(tree.lookupModuleId("A", &aId, &error), "lookup A id should succeed");
+  expectTrue(aId != 0, "lookup should return non-zero module id");
+
+  lifetree::Node snapshot;
+  expectTrue(tree.getModuleById(aId, &snapshot, &error), "snapshot by id should succeed");
+  expectTrue(snapshot.Name == "A", "snapshot should report module name");
+  expectTrue(snapshot.IsRegistered, "snapshot should report registered state");
+
+  bool isRegistered = false;
+  expectTrue(tree.isModuleRegistered(aId, &isRegistered, &error), "registration query should succeed");
+  expectTrue(isRegistered, "A should be registered before unregister");
+
+  lifetree::ModuleId unregisteredId = 0;
+  expectTrue(tree.unregisterModule("A", &unregisteredId, &error), "unregister A should succeed");
+  expectTrue(unregisteredId == aId, "unregister should return same id as lookup");
+  expectEqual(tree.registeredModuleCount(), 1U, "registered module count should drop to 1");
+
+  error.clear();
+  lifetree::ModuleId missingId = 0;
+  expectFalse(tree.lookupModuleId("A", &missingId, &error), "lookup should fail after unregister");
+  expectTrue(!error.empty(), "failed lookup should set error");
+
+  error.clear();
+  expectTrue(tree.isModuleRegistered(aId, &isRegistered, &error), "registration query should still work by id");
+  expectFalse(isRegistered, "A should be unregistered after unregister");
+
+  error.clear();
+  expectTrue(tree.getModuleById(aId, &snapshot, &error), "snapshot should still exist while deferred");
+  expectFalse(snapshot.IsRegistered, "snapshot should reflect unregistered lifecycle state");
+}
+
+void testDeleteContractNonMutatingWhenBlocked() {
+  lifetree::LifeTree tree;
+  std::string error;
+
+  expectTrue(tree.addModule("A", &error), "add A");
+  expectTrue(tree.addModule("B", &error), "add B");
+  expectTrue(tree.addDependency("B", "A", &error), "B->A");
+
+  const std::size_t initialModules = tree.moduleCount();
+  const std::size_t initialEdges = tree.dependencyEdgeCount();
+  const auto initialDependents = tree.getDependents("A", &error);
+  expectContains(initialDependents, "B", "A dependents should include B before delete attempt");
+
+  error.clear();
+  expectFalse(tree.deleteModule("A", &error), "delete A should fail when dependents are present");
+  expectTrue(!error.empty(), "blocked delete should set error");
+  expectTrue(tree.hasModule("A"), "A should remain visible after blocked delete");
+  expectTrue(tree.hasModule("B"), "B should remain visible after blocked delete");
+  expectEqual(tree.moduleCount(), initialModules, "blocked delete should not change module count");
+  expectEqual(tree.dependencyEdgeCount(), initialEdges, "blocked delete should not change edge count");
+
+  error.clear();
+  const auto dependentsAfter = tree.getDependents("A", &error);
+  expectContains(dependentsAfter, "B", "blocked delete should preserve dependent edge");
+}
+
 } // namespace
 
 int main() {
@@ -312,6 +379,8 @@ int main() {
   testStatsAndTopologyHelpers();
   testInvariantValidation();
   testUnregisterAndDestroyLifecycle();
+  testLifecycleObservabilityById();
+  testDeleteContractNonMutatingWhenBlocked();
 
   if (failures == 0) {
     std::cout << "[PASS] all LifeTree tests passed\n";

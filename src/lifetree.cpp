@@ -36,6 +36,50 @@ bool LifeTree::addModule(const std::string &name, std::string *error) {
   return true;
 }
 
+bool LifeTree::lookupModuleId(const std::string &name, ModuleId *id, std::string *error) const {
+  if (id == nullptr) {
+    setError(error, "module id output cannot be null");
+    return false;
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  return resolveModuleIdUnlocked(name, id, error);
+}
+
+bool LifeTree::getModuleById(ModuleId id, Node *node, std::string *error) const {
+  if (node == nullptr) {
+    setError(error, "node output cannot be null");
+    return false;
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto nodeIt = nodes_.find(id);
+  if (nodeIt == nodes_.end()) {
+    setError(error, "module id does not exist");
+    return false;
+  }
+
+  *node = nodeIt->second;
+  return true;
+}
+
+bool LifeTree::isModuleRegistered(ModuleId id, bool *isRegistered, std::string *error) const {
+  if (isRegistered == nullptr) {
+    setError(error, "registration output cannot be null");
+    return false;
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto nodeIt = nodes_.find(id);
+  if (nodeIt == nodes_.end()) {
+    setError(error, "module id does not exist");
+    return false;
+  }
+
+  *isRegistered = nodeIt->second.IsRegistered;
+  return true;
+}
+
 bool LifeTree::unregisterModule(const std::string &name,
                                 ModuleId *unregisteredId,
                                 std::string *error) {
@@ -515,6 +559,11 @@ std::string LifeTree::toDot() const {
 bool LifeTree::hasModule(const std::string &name) const {
   std::lock_guard<std::mutex> lock(mutex_);
   return moduleExistsUnlocked(name);
+}
+
+std::size_t LifeTree::registeredModuleCount() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return name_to_id_.size();
 }
 
 std::size_t LifeTree::moduleCount() const {

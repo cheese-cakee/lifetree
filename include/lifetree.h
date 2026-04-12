@@ -37,6 +37,9 @@ struct GraphStats {
 class LifeTree {
 public:
   bool addModule(const std::string &name, std::string *error = nullptr);
+  bool lookupModuleId(const std::string &name, ModuleId *id, std::string *error = nullptr) const;
+  bool getModuleById(ModuleId id, Node *node, std::string *error = nullptr) const;
+  bool isModuleRegistered(ModuleId id, bool *isRegistered, std::string *error = nullptr) const;
   bool unregisterModule(const std::string &name,
                         ModuleId *unregisteredId = nullptr,
                         std::string *error = nullptr);
@@ -47,6 +50,9 @@ public:
   bool canSafelyDelete(const std::string &name,
                        std::vector<std::string> *blockers = nullptr,
                        std::string *error = nullptr) const;
+  // Contract:
+  // - returns false and does not mutate graph state when active dependents exist
+  // - unregisters + destroys atomically when deletion is allowed
   bool deleteModule(const std::string &name, std::string *error = nullptr);
   bool forceDeleteWithCascade(const std::string &name,
                               std::vector<std::string> *deleted = nullptr,
@@ -68,6 +74,7 @@ public:
   std::string toDot() const;
 
   bool hasModule(const std::string &name) const;
+  std::size_t registeredModuleCount() const;
   std::size_t moduleCount() const;
   std::size_t dependencyEdgeCount() const;
 
