@@ -260,6 +260,43 @@ void testInvariantValidation() {
   expectTrue(tree.validateInvariants(&error), "invariants should hold");
 }
 
+void testUnregisterAndDestroyLifecycle() {
+  lifetree::LifeTree tree;
+  std::string error;
+
+  expectTrue(tree.addModule("A", &error), "add A");
+  expectTrue(tree.addModule("B", &error), "add B");
+  expectTrue(tree.addDependency("B", "A", &error), "B->A");
+
+  lifetree::ModuleId oldA = 0;
+  expectTrue(tree.unregisterModule("A", &oldA, &error), "unregister A should succeed");
+  expectTrue(oldA != 0, "unregister should return non-zero module id");
+  expectFalse(tree.hasModule("A"), "A should be name-invisible after unregister");
+
+  expectTrue(tree.addModule("A", &error), "re-add A should succeed after unregister");
+  expectTrue(tree.hasModule("A"), "new A should be visible");
+
+  expectFalse(tree.destroyModule(oldA, &error), "destroy old A should fail while B depends on it");
+  expectTrue(!error.empty(), "blocked destroy should set error");
+
+  error.clear();
+  expectTrue(tree.deleteModule("B", &error), "delete B should succeed");
+  expectTrue(tree.destroyModule(oldA, &error), "destroy old A should succeed after deleting B");
+
+  expectFalse(tree.destroyModule(oldA, &error), "destroying old A twice should fail");
+
+  expectFalse(tree.destroyModule(0, &error), "destroying unknown id should fail");
+  expectTrue(!error.empty(), "destroying unknown id should set error");
+
+  error.clear();
+  expectFalse(tree.destroyModule(1, &error), "destroy registered new A should fail");
+  expectTrue(!error.empty(), "destroying registered module should set error");
+
+  lifetree::ModuleId newA = 0;
+  expectTrue(tree.unregisterModule("A", &newA, &error), "unregister new A should succeed");
+  expectTrue(tree.destroyModule(newA, &error), "destroy new A should succeed after unregister");
+}
+
 } // namespace
 
 int main() {
@@ -274,6 +311,7 @@ int main() {
   testCascadeDelete();
   testStatsAndTopologyHelpers();
   testInvariantValidation();
+  testUnregisterAndDestroyLifecycle();
 
   if (failures == 0) {
     std::cout << "[PASS] all LifeTree tests passed\n";
