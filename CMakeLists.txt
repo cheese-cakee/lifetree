@@ -21,6 +21,9 @@ target_link_libraries(lifetree_demo PRIVATE lifetree)
 
 add_executable(lifetree_tests tests/lifetree_tests.cpp)
 target_link_libraries(lifetree_tests PRIVATE lifetree)
+add_executable(lifetree_stress_tests tests/lifetree_stress_tests.cpp)
+target_link_libraries(lifetree_stress_tests PRIVATE lifetree)
 
 enable_testing()
 add_test(NAME lifetree_tests COMMAND lifetree_tests)
+add_test(NAME lifetree_stress_tests COMMAND lifetree_stress_tests)

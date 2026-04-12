@@ -122,6 +122,7 @@ The current test suite covers:
 13. unregister/destroy lifecycle semantics
 14. id-based lifecycle observability semantics
 15. `deleteModule` non-mutation contract when blocked
+16. randomized mutation stress coverage with invariant checks (fixed seeds)
 
 The latest local run result is recorded in `TEST_RESULTS.md`.
 

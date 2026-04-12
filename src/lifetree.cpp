@@ -464,8 +464,8 @@ bool LifeTree::validateInvariants(std::string *error) const {
         return false;
       }
     } else {
-      if (nameIt != name_to_id_.end()) {
-        setError(error, "unregistered module is still name-visible: " + node.Name);
+      if (nameIt != name_to_id_.end() && nameIt->second == id) {
+        setError(error, "unregistered module is still name-visible under same id: " + node.Name);
         return false;
       }
     }
@@ -734,7 +734,12 @@ std::vector<ModuleId> LifeTree::sortedNodeIdsByNameUnlocked() const {
   }
 
   std::sort(ids.begin(), ids.end(), [this](ModuleId left, ModuleId right) {
-    return nodes_.at(left).Name < nodes_.at(right).Name;
+    const auto &leftNode = nodes_.at(left);
+    const auto &rightNode = nodes_.at(right);
+    if (leftNode.Name != rightNode.Name) {
+      return leftNode.Name < rightNode.Name;
+    }
+    return left < right;
   });
   return ids;
 }
