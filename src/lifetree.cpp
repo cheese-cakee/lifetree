@@ -171,6 +171,20 @@ bool LifeTree::deleteModule(const std::string &name, std::string *error) {
     return false;
   }
 
+  if (!nodeIt->second.Dependents.empty()) {
+    const auto blockers = idsToSortedNamesUnlocked(nodeIt->second.Dependents);
+    std::ostringstream stream;
+    stream << "cannot delete module " << name << "; active dependents: ";
+    for (std::size_t index = 0; index < blockers.size(); ++index) {
+      if (index != 0) {
+        stream << ", ";
+      }
+      stream << blockers[index];
+    }
+    setError(error, stream.str());
+    return false;
+  }
+
   name_to_id_.erase(name);
   nodeIt->second.IsRegistered = false;
   return destroyModuleUnlocked(id, error);
