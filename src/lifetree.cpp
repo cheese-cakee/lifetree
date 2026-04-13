@@ -212,7 +212,7 @@ bool LifeTree::removeDependency(const std::string &from, const std::string &to, 
 }
 
 bool LifeTree::canSafelyDelete(const std::string &name,
-                               std::vector<std::string> *blockers,
+                               std::vector<ModuleId> *blockers,
                                std::string *error) const {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -224,7 +224,7 @@ bool LifeTree::canSafelyDelete(const std::string &name,
 
   const auto &node = nodes_.at(id);
   if (blockers != nullptr) {
-    *blockers = idsToSortedNamesUnlocked(node.Dependents);
+    *blockers = sortNodeIdsUnlocked(node.Dependents);
   }
   return node.Dependents.empty();
 }
@@ -249,14 +249,14 @@ bool LifeTree::deleteModule(const std::string &name, std::string *error) {
   }
 
   if (!nodeIt->second.Dependents.empty()) {
-    const auto blockers = idsToSortedNamesUnlocked(nodeIt->second.Dependents);
+    const auto blockers = sortNodeIdsUnlocked(nodeIt->second.Dependents);
     std::ostringstream stream;
     stream << "cannot delete module " << name << "; active dependents: ";
     for (std::size_t index = 0; index < blockers.size(); ++index) {
       if (index != 0) {
         stream << ", ";
       }
-      stream << blockers[index];
+      stream << nodes_.at(blockers[index]).Name << " (#" << blockers[index] << ")";
     }
     setError(error, stream.str());
     return false;
@@ -268,7 +268,7 @@ bool LifeTree::deleteModule(const std::string &name, std::string *error) {
 }
 
 bool LifeTree::forceDeleteWithCascade(const std::string &name,
-                                      std::vector<std::string> *deleted,
+                                      std::vector<ModuleId> *deleted,
                                       std::string *error) {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -283,8 +283,8 @@ bool LifeTree::forceDeleteWithCascade(const std::string &name,
     return false;
   }
 
-  std::vector<std::string> deletedNames;
-  deletedNames.reserve(order.size());
+  std::vector<ModuleId> deletedIds;
+  deletedIds.reserve(order.size());
 
   for (const auto nodeId : order) {
     auto nodeIt = nodes_.find(nodeId);
@@ -292,7 +292,7 @@ bool LifeTree::forceDeleteWithCascade(const std::string &name,
       continue;
     }
 
-    deletedNames.push_back(nodeIt->second.Name);
+    deletedIds.push_back(nodeId);
     if (nodeIt->second.IsRegistered) {
       name_to_id_.erase(nodeIt->second.Name);
       nodeIt->second.IsRegistered = false;
@@ -309,12 +309,12 @@ bool LifeTree::forceDeleteWithCascade(const std::string &name,
   }
 
   if (deleted != nullptr) {
-    *deleted = std::move(deletedNames);
+    *deleted = std::move(deletedIds);
   }
   return true;
 }
 
-std::vector<std::string> LifeTree::topologicalOrder(std::string *error) const {
+std::vector<ModuleId> LifeTree::topologicalOrder(std::string *error) const {
   std::lock_guard<std::mutex> lock(mutex_);
 
   std::unordered_map<ModuleId, int> indegrees;
@@ -322,25 +322,26 @@ std::vector<std::string> LifeTree::topologicalOrder(std::string *error) const {
     indegrees.emplace(id, static_cast<int>(node.Dependencies.size()));
   }
 
-  std::queue<ModuleId> ready;
+  std::set<std::pair<std::string, ModuleId>> ready;
   for (const auto &[id, indegree] : indegrees) {
     if (indegree == 0) {
-      ready.push(id);
+      ready.emplace(nodes_.at(id).Name, id);
     }
   }
 
-  std::vector<std::string> order;
+  std::vector<ModuleId> order;
   order.reserve(nodes_.size());
 
   while (!ready.empty()) {
-    const auto currentId = ready.front();
-    ready.pop();
+    auto currentIt = ready.begin();
+    const auto currentId = currentIt->second;
+    ready.erase(currentIt);
 
     const auto nodeIt = nodes_.find(currentId);
     if (nodeIt == nodes_.end()) {
       continue;
     }
-    order.push_back(nodeIt->second.Name);
+    order.push_back(currentId);
 
     for (const auto dependentId : nodeIt->second.Dependents) {
       auto indegreeIt = indegrees.find(dependentId);
@@ -349,7 +350,7 @@ std::vector<std::string> LifeTree::topologicalOrder(std::string *error) const {
       }
       --indegreeIt->second;
       if (indegreeIt->second == 0) {
-        ready.push(dependentId);
+        ready.emplace(nodes_.at(dependentId).Name, dependentId);
       }
     }
   }
@@ -362,7 +363,7 @@ std::vector<std::string> LifeTree::topologicalOrder(std::string *error) const {
   return order;
 }
 
-std::vector<std::string> LifeTree::getDependencies(const std::string &name, std::string *error) const {
+std::vector<ModuleId> LifeTree::getDependencies(const std::string &name, std::string *error) const {
   std::lock_guard<std::mutex> lock(mutex_);
 
   ModuleId id = 0;
@@ -371,10 +372,10 @@ std::vector<std::string> LifeTree::getDependencies(const std::string &name, std:
     return {};
   }
 
-  return idsToSortedNamesUnlocked(nodes_.at(id).Dependencies);
+  return sortNodeIdsUnlocked(nodes_.at(id).Dependencies);
 }
 
-std::vector<std::string> LifeTree::getDependents(const std::string &name, std::string *error) const {
+std::vector<ModuleId> LifeTree::getDependents(const std::string &name, std::string *error) const {
   std::lock_guard<std::mutex> lock(mutex_);
 
   ModuleId id = 0;
@@ -383,10 +384,10 @@ std::vector<std::string> LifeTree::getDependents(const std::string &name, std::s
     return {};
   }
 
-  return idsToSortedNamesUnlocked(nodes_.at(id).Dependents);
+  return sortNodeIdsUnlocked(nodes_.at(id).Dependents);
 }
 
-std::vector<std::string> LifeTree::transitiveDependencies(const std::string &name, std::string *error) const {
+std::vector<ModuleId> LifeTree::transitiveDependencies(const std::string &name, std::string *error) const {
   std::lock_guard<std::mutex> lock(mutex_);
 
   ModuleId id = 0;
@@ -398,7 +399,7 @@ std::vector<std::string> LifeTree::transitiveDependencies(const std::string &nam
   return traverseUnlocked(id, true);
 }
 
-std::vector<std::string> LifeTree::transitiveDependents(const std::string &name, std::string *error) const {
+std::vector<ModuleId> LifeTree::transitiveDependents(const std::string &name, std::string *error) const {
   std::lock_guard<std::mutex> lock(mutex_);
 
   ModuleId id = 0;
@@ -425,7 +426,7 @@ bool LifeTree::analyzeDelete(const std::string &name, DeleteAnalysis *analysis, 
   }
 
   const auto &node = nodes_.at(id);
-  analysis->DirectDependents = idsToSortedNamesUnlocked(node.Dependents);
+  analysis->DirectDependents = sortNodeIdsUnlocked(node.Dependents);
   analysis->TransitiveDependents = traverseUnlocked(id, false);
   analysis->CanSafelyDelete = analysis->DirectDependents.empty();
 
@@ -436,15 +437,7 @@ bool LifeTree::analyzeDelete(const std::string &name, DeleteAnalysis *analysis, 
     return false;
   }
 
-  analysis->SuggestedCascadeOrder.clear();
-  analysis->SuggestedCascadeOrder.reserve(orderIds.size());
-  for (const auto nodeId : orderIds) {
-    auto nodeIt = nodes_.find(nodeId);
-    if (nodeIt != nodes_.end()) {
-      analysis->SuggestedCascadeOrder.push_back(nodeIt->second.Name);
-    }
-  }
-
+  analysis->SuggestedCascadeOrder = std::move(orderIds);
   return true;
 }
 
@@ -524,7 +517,7 @@ GraphStats LifeTree::stats() const {
   return stats;
 }
 
-std::vector<std::string> LifeTree::roots() const {
+std::vector<ModuleId> LifeTree::roots() const {
   std::lock_guard<std::mutex> lock(mutex_);
 
   std::unordered_set<ModuleId> rootIds;
@@ -534,10 +527,10 @@ std::vector<std::string> LifeTree::roots() const {
     }
   }
 
-  return idsToSortedNamesUnlocked(rootIds);
+  return sortNodeIdsUnlocked(rootIds);
 }
 
-std::vector<std::string> LifeTree::leaves() const {
+std::vector<ModuleId> LifeTree::leaves() const {
   std::lock_guard<std::mutex> lock(mutex_);
 
   std::unordered_set<ModuleId> leafIds;
@@ -547,10 +540,10 @@ std::vector<std::string> LifeTree::leaves() const {
     }
   }
 
-  return idsToSortedNamesUnlocked(leafIds);
+  return sortNodeIdsUnlocked(leafIds);
 }
 
-std::vector<std::string> LifeTree::isolatedModules() const {
+std::vector<ModuleId> LifeTree::isolatedModules() const {
   std::lock_guard<std::mutex> lock(mutex_);
 
   std::unordered_set<ModuleId> isolatedIds;
@@ -560,7 +553,40 @@ std::vector<std::string> LifeTree::isolatedModules() const {
     }
   }
 
-  return idsToSortedNamesUnlocked(isolatedIds);
+  return sortNodeIdsUnlocked(isolatedIds);
+}
+
+std::vector<ModuleId> LifeTree::getDeferredModules() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::unordered_set<ModuleId> deferredIds;
+  for (const auto &[id, node] : nodes_) {
+    if (!node.IsRegistered) {
+      deferredIds.insert(id);
+    }
+  }
+  return sortNodeIdsUnlocked(deferredIds);
+}
+
+std::size_t LifeTree::garbageCollect(std::vector<ModuleId> *destroyed) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::size_t count = 0;
+  
+  std::vector<ModuleId> toDestroy;
+  for (const auto &[id, node] : nodes_) {
+    if (!node.IsRegistered && node.Dependents.empty()) {
+      toDestroy.push_back(id);
+    }
+  }
+  
+  for (const auto id : toDestroy) {
+    if (destroyModuleUnlocked(id, nullptr)) {
+      ++count;
+      if (destroyed != nullptr) {
+        destroyed->push_back(id);
+      }
+    }
+  }
+  return count;
 }
 
 std::string LifeTree::toDot() const {
@@ -766,6 +792,23 @@ std::vector<ModuleId> LifeTree::sortedNodeIdsByNameUnlocked() const {
   return ids;
 }
 
+std::vector<ModuleId> LifeTree::sortNodeIdsUnlocked(const std::unordered_set<ModuleId> &ids) const {
+  std::vector<ModuleId> sorted;
+  sorted.reserve(ids.size());
+  for (const auto id : ids) {
+    sorted.push_back(id);
+  }
+  std::sort(sorted.begin(), sorted.end(), [this](ModuleId left, ModuleId right) {
+    const auto &leftNode = nodes_.at(left);
+    const auto &rightNode = nodes_.at(right);
+    if (leftNode.Name != rightNode.Name) {
+      return leftNode.Name < rightNode.Name;
+    }
+    return left < right;
+  });
+  return sorted;
+}
+
 std::vector<std::string> LifeTree::idsToSortedNamesUnlocked(const std::unordered_set<ModuleId> &ids) const {
   std::vector<std::string> names;
   names.reserve(ids.size());
@@ -781,7 +824,7 @@ std::vector<std::string> LifeTree::idsToSortedNamesUnlocked(const std::unordered
   return names;
 }
 
-std::vector<std::string> LifeTree::traverseUnlocked(ModuleId start, bool followDependencies) const {
+std::vector<ModuleId> LifeTree::traverseUnlocked(ModuleId start, bool followDependencies) const {
   std::unordered_set<ModuleId> visited;
   std::queue<ModuleId> pending;
   pending.push(start);
@@ -808,7 +851,7 @@ std::vector<std::string> LifeTree::traverseUnlocked(ModuleId start, bool followD
     }
   }
 
-  return idsToSortedNamesUnlocked(result);
+  return sortNodeIdsUnlocked(result);
 }
 
 bool LifeTree::computeCascadeDeletionOrderUnlocked(ModuleId start,
