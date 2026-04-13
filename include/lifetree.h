@@ -22,9 +22,9 @@ struct Node {
 
 struct DeleteAnalysis {
   bool CanSafelyDelete = false;
-  std::vector<std::string> DirectDependents;
-  std::vector<std::string> TransitiveDependents;
-  std::vector<std::string> SuggestedCascadeOrder;
+  std::vector<ModuleId> DirectDependents;
+  std::vector<ModuleId> TransitiveDependents;
+  std::vector<ModuleId> SuggestedCascadeOrder;
 };
 
 struct GraphStats {
@@ -48,29 +48,31 @@ public:
   bool removeDependency(const std::string &from, const std::string &to, std::string *error = nullptr);
 
   bool canSafelyDelete(const std::string &name,
-                       std::vector<std::string> *blockers = nullptr,
+                       std::vector<ModuleId> *blockers = nullptr,
                        std::string *error = nullptr) const;
   // Contract:
   // - returns false and does not mutate graph state when active dependents exist
   // - unregisters + destroys atomically when deletion is allowed
   bool deleteModule(const std::string &name, std::string *error = nullptr);
   bool forceDeleteWithCascade(const std::string &name,
-                              std::vector<std::string> *deleted = nullptr,
+                              std::vector<ModuleId> *deleted = nullptr,
                               std::string *error = nullptr);
 
-  std::vector<std::string> topologicalOrder(std::string *error = nullptr) const;
-  std::vector<std::string> getDependencies(const std::string &name, std::string *error = nullptr) const;
-  std::vector<std::string> getDependents(const std::string &name, std::string *error = nullptr) const;
-  std::vector<std::string> transitiveDependencies(const std::string &name, std::string *error = nullptr) const;
-  std::vector<std::string> transitiveDependents(const std::string &name, std::string *error = nullptr) const;
+  std::vector<ModuleId> topologicalOrder(std::string *error = nullptr) const;
+  std::vector<ModuleId> getDependencies(const std::string &name, std::string *error = nullptr) const;
+  std::vector<ModuleId> getDependents(const std::string &name, std::string *error = nullptr) const;
+  std::vector<ModuleId> transitiveDependencies(const std::string &name, std::string *error = nullptr) const;
+  std::vector<ModuleId> transitiveDependents(const std::string &name, std::string *error = nullptr) const;
 
   bool analyzeDelete(const std::string &name, DeleteAnalysis *analysis, std::string *error = nullptr) const;
   bool validateInvariants(std::string *error = nullptr) const;
 
   GraphStats stats() const;
-  std::vector<std::string> roots() const;
-  std::vector<std::string> leaves() const;
-  std::vector<std::string> isolatedModules() const;
+  std::vector<ModuleId> roots() const;
+  std::vector<ModuleId> leaves() const;
+  std::vector<ModuleId> isolatedModules() const;
+  std::vector<ModuleId> getDeferredModules() const;
+  std::size_t garbageCollect(std::vector<ModuleId> *destroyed = nullptr);
   std::string toDot() const;
   std::string toJson() const;
 
@@ -85,9 +87,10 @@ private:
   bool destroyModuleUnlocked(ModuleId id, std::string *error);
 
   std::vector<ModuleId> sortedNodeIdsByNameUnlocked() const;
+  std::vector<ModuleId> sortNodeIdsUnlocked(const std::unordered_set<ModuleId> &ids) const;
   std::vector<std::string> idsToSortedNamesUnlocked(const std::unordered_set<ModuleId> &ids) const;
 
-  std::vector<std::string> traverseUnlocked(ModuleId start, bool followDependencies) const;
+  std::vector<ModuleId> traverseUnlocked(ModuleId start, bool followDependencies) const;
   bool computeCascadeDeletionOrderUnlocked(ModuleId start,
                                            std::vector<ModuleId> *order,
                                            std::string *error) const;
