@@ -1,68 +1,49 @@
 # LifeTree
 
-Dependency-aware lifecycle management for interdependent runtime modules and resources.
+Deterministic, memory-safe Directed Acyclic Graph (DAG) for C++ runtime module orchestration.
 
-LifeTree is a small C++ library for modeling dependency relationships between runtime-owned objects and enforcing safe deletion semantics. It is designed for systems code that needs explicit answers to questions like:
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://isocpp.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-Passing-brightgreen.svg)]()
 
-- Can this module be deleted right now?
-- Which live objects block deletion?
-- What is the minimal safe deletion order?
-- Which invariants should always hold after graph mutation?
-
-The focus is correctness, determinism, and inspectability for production lifecycle control paths.
-
-## Why This Exists
-
-Many runtimes, plugin systems, and embedders allow objects to be registered, linked, unregistered, and destroyed at different times. Once dependencies appear between those objects, deletion stops being a bookkeeping problem and becomes a lifetime-safety problem.
-
-LifeTree explores that problem directly with:
-
-- explicit dependency edges (`consumer -> provider`)
-- safe-delete checks with blocker diagnostics
-- deterministic cascade planning
-- cycle rejection on mutation
-- invariant validation for debugging and tests
+LifeTree is a lightweight, zero-dependency C++ library for modeling dependency relationships between runtime-owned objects and enforcing safe deletion semantics.
 
 ## Capabilities
 
-### Graph mutation
+### Graph Mutation (DAG Enforcement)
+- Add and remove modules securely.
+- Add logically directed dependency edges (`consumer -> provider`).
+- Strict rejection of self-dependencies.
+- Strict cycle-rejection on insertion (forces DAG compliance).
 
-- add and remove modules
-- add and remove dependency edges
-- reject self-dependencies
-- reject cycle-creating insertions
+### Lifetime Safety
+- Pre-compute whether a module can be deleted safely without mutating state (`analyzeDelete`).
+- Report direct downstream blockers preventing deletion.
+- Analyze transitive blast-radius prior to destructive actions.
+- Compute a deterministic dependents-first cascade order (Topological Sorting).
+- Explicit safety separation: `unregisterModule(name)` followed by `destroyModule(id)`.
 
-### Lifetime safety
+### Deletion Contract
+- `deleteModule(name)` remains non-mutating and atomically fails if blocked by active dependents.
+- When permitted, `deleteModule(name)` performs unregister + destroy sequentially.
+- `unregisterModule(name)` makes a module name-invisible but safely buffers the node via stable `ModuleId`.
+- `destroyModule(id)` strictly enforces that nodes are unregistered with zero active dependents before memory is purged.
+- `garbageCollect()` safely detects and purges isolated, deferred nodes.
 
-- check whether a module can be deleted safely
-- report direct blockers
-- analyze transitive impact before deletion
-- compute a deterministic dependents-first cascade order
-- explicit `unregisterModule(name)` then `destroyModule(id)` flow
+### Lifecycle Observability
+- Resolve names to stable integer IDs via `lookupModuleId`.
+- Inspect internal node attributes by ID with `getModuleById`.
+- Check live namespace availability with `isModuleRegistered`.
+- Track active memory footprint with `registeredModuleCount`.
 
-### Deletion contract
-
-- `deleteModule(name)` is non-mutating when blocked by active dependents
-- when allowed, `deleteModule(name)` performs unregister + destroy atomically
-- `unregisterModule(name)` makes a module name-invisible but keeps the node deferred by stable `ModuleId`
-- `destroyModule(id)` requires an unregistered node with no active dependents
-
-### Lifecycle observability
-
-- resolve name to stable id with `lookupModuleId`
-- inspect node state by id with `getModuleById`
-- check lifecycle state with `isModuleRegistered`
-- track current name-visible population with `registeredModuleCount`
-
-### Inspection and debugging
-
-- direct dependency and dependent queries
-- transitive dependency and dependent traversal
-- topological ordering
-- roots, leaves, isolated-node, and edge-count helpers
-- Graphviz DOT export with stable `ModuleId`-keyed edges
-- deterministic JSON export with both name and id edge references
-- invariant validation for edge consistency
+### Inspection and Debugging
+- Granular dependency and dependent edge queries (`getDependencies`, `getDependents`).
+- Transitive traversal using Depth-First Search (DFS).
+- Strict topological ordering guaranteed by `std::set` structures.
+- Roots, leaves, isolated-node, and total edge-count helper endpoints.
+- Native Graphviz DOT export utilizing resilient `ModuleId`-keyed edges.
+- Deterministic JSON export for programmatic CI/CD integration.
+- Invariant validation engine for internal stress testing.
 
 ## Quickstart
 
@@ -74,33 +55,23 @@ int main() {
   lifetree::LifeTree tree;
   std::string error;
 
-  tree.addModule("runtime", &error);
-  tree.addModule("auth", &error);
-  tree.addModule("api", &error);
+  tree.addModule("core.runtime", &error);
+  tree.addModule("core.auth", &error);
+  tree.addModule("api.gateway", &error);
 
-  tree.addDependency("auth", "runtime", &error);
-  tree.addDependency("api", "auth", &error);
+  tree.addDependency("core.auth", "core.runtime", &error);
+  tree.addDependency("api.gateway", "core.auth", &error);
 
   lifetree::DeleteAnalysis analysis;
-  tree.analyzeDelete("runtime", &analysis, &error);
-  std::cout << "can delete runtime? " << (analysis.CanSafelyDelete ? "yes" : "no") << "\n";
+  tree.analyzeDelete("core.runtime", &analysis, &error);
+  
+  std::cout << "Can delete runtime safely? " 
+            << (analysis.CanSafelyDelete ? "Yes" : "No - Blocked by consumers") << "\n";
 
-  tree.deleteModule("api", &error);
-  tree.deleteModule("auth", &error);
-  tree.deleteModule("runtime", &error);
-
-  std::cout << tree.toJson();
+  std::cout << tree.toDot();
   return 0;
 }
 ```
-
-## Why LifeTree (vs Generic Graph Libraries)
-
-- lifecycle-aware semantics, not just graph primitives (`unregister` vs `destroy`)
-- safe-delete contract with blocker diagnostics and deterministic cascade suggestions
-- stable identity model (`ModuleId`) that remains valid across deferred deletion states
-- deterministic exports for tooling (`toDot`, `toJson`) with id-keyed relationships
-- built-in invariant validation and stress-tested mutation behavior
 
 ## Project Layout
 
@@ -116,12 +87,9 @@ lifetree/
 |   |-- lifetree.h
 |-- src/
 |   |-- lifetree.cpp
-|   |-- demo.cpp
-|   |-- runtime_plugin_example.cpp
 |-- tests/
 |   |-- lifetree_tests.cpp
 |   |-- lifetree_stress_tests.cpp
-|-- .gitignore
 ```
 
 ## Build And Run
@@ -131,50 +99,48 @@ lifetree/
 ```bash
 cmake -S . -B build
 cmake --build build
+
 ctest --test-dir build --output-on-failure
-./build/lifetree_demo
-./build/lifetree_runtime_example
 ./build/lifetree_bench
 ```
 
-### Benchmark
+### Direct Compiler Invocation
 
+```bash
+mkdir -p build
+g++ -std=c++17 -Wall -Wextra -Wpedantic -Iinclude src/lifetree.cpp tests/lifetree_tests.cpp -o build/lifetree_tests
+./build/lifetree_tests
+```
+
+### Benchmarks
+
+Execute the optimized benchmark configuration:
 ```bash
 g++ -O2 -std=c++17 -Wall -Wextra -Wpedantic -Iinclude src/lifetree.cpp benchmarks/lifetree_bench.cpp -o build/lifetree_bench
 ./build/lifetree_bench
 ```
-
-Checked-in benchmark notes and baseline numbers are in `BENCHMARK_RESULTS.md`.
-
-### Direct compiler invocation
-
-```bash
-mkdir -p build
-g++ -std=c++17 -Wall -Wextra -Wpedantic -Iinclude src/lifetree.cpp src/demo.cpp -o build/lifetree_demo
-g++ -std=c++17 -Wall -Wextra -Wpedantic -Iinclude src/lifetree.cpp tests/lifetree_tests.cpp -o build/lifetree_tests
-./build/lifetree_tests
-./build/lifetree_demo
-```
+*(Verified baseline metrics are available in `BENCHMARK_RESULTS.md`.)*
 
 ## Test Coverage
 
-The test suite covers:
+The test suite rigorously verifies 17 distinct operational domains:
 
-1. module add, duplicate handling, and invalid input
-2. linear dependency deletion constraints
-3. diamond dependency behavior
-4. cycle insertion rejection
-5. topological ordering constraints
-6. missing-node error handling
-7. dependency edge removal semantics
-8. transitive query correctness
-9. delete-analysis output correctness
-10. cascade deletion behavior
-11. graph stats and helper APIs
-12. invariant validation checks
-13. unregister/destroy lifecycle semantics
-14. id-based lifecycle observability semantics
-15. `deleteModule` non-mutation contract when blocked
-16. randomized mutation stress coverage with invariant checks (fixed seeds)
+1. Base module addition, duplicate rejection, and empty-string handling.
+2. Linear dependency structural deletion constraints.
+3. Complex diamond dependency DAG traversal.
+4. Mathematical cycle insertion detection and rejection.
+5. Absolute topological ordering consistency.
+6. Missing-node and invalid ID error diagnostics.
+7. Dependency edge removal and memory decrements.
+8. Transitive search accuracy (DFS).
+9. Predictive `analyzeDelete()` non-mutation correctness.
+10. System-level `forceDeleteWithCascade` tracking.
+11. Statistical extraction APIs.
+12. Deep invariant validation constraints.
+13. `unregister` and `destroy` deferred lifecycle boundaries.
+14. Safe-mapping logic isolating `ModuleId`s against "Ghost Edge" string shadowing.
+15. Garbage Collector sweeps for deferred memory isolation logic.
+16. Unload mutation lock contracts during blocked unregister attempts.
+17. Heavy randomized mutation fuzzer tracking with fixed RNG seeds.
 
-The latest local run result is recorded in `TEST_RESULTS.md`.
+*(Refer to `TEST_RESULTS.md` for output signatures).*
