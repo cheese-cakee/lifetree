@@ -41,6 +41,18 @@ void expectContains(const std::vector<std::string> &values,
   }
 }
 
+std::vector<std::string> toNames(const lifetree::LifeTree &tree, const std::vector<lifetree::ModuleId> &ids) {
+  std::vector<std::string> names;
+  names.reserve(ids.size());
+  for (const auto id : ids) {
+    lifetree::Node node;
+    if (tree.getModuleById(id, &node)) {
+      names.push_back(node.Name);
+    }
+  }
+  return names;
+}
+
 std::unordered_map<std::string, std::size_t> indexMap(const std::vector<std::string> &order) {
   std::unordered_map<std::string, std::size_t> indices;
   for (std::size_t index = 0; index < order.size(); ++index) {
@@ -73,14 +85,14 @@ void testLinearDependencyAndDelete() {
   expectTrue(tree.addDependency("C", "B", &error), "C->B");
   expectEqual(tree.dependencyEdgeCount(), 2U, "edge count should be 2");
 
-  std::vector<std::string> blockers;
-  expectFalse(tree.canSafelyDelete("A", &blockers, &error), "A should not be deletable");
-  expectContains(blockers, "B", "A blockers should contain B");
+  std::vector<lifetree::ModuleId> blockerIds;
+  expectFalse(tree.canSafelyDelete("A", &blockerIds, &error), "A should not be deletable");
+  expectContains(toNames(tree, blockerIds), "B", "A blockers should contain B");
 
   expectFalse(tree.deleteModule("A", &error), "delete A should fail while B depends on it");
   expectTrue(tree.deleteModule("C", &error), "delete C should succeed");
   expectTrue(tree.deleteModule("B", &error), "delete B should succeed");
-  expectTrue(tree.canSafelyDelete("A", &blockers, &error), "A should be deletable now");
+  expectTrue(tree.canSafelyDelete("A", &blockerIds, &error), "A should be deletable now");
 }
 
 void testDiamondDependencies() {
@@ -96,8 +108,9 @@ void testDiamondDependencies() {
   expectTrue(tree.addDependency("D", "B", &error), "D->B");
   expectTrue(tree.addDependency("D", "C", &error), "D->C");
 
-  std::vector<std::string> blockers;
-  expectFalse(tree.canSafelyDelete("A", &blockers, &error), "A should not be deletable in diamond");
+  std::vector<lifetree::ModuleId> blockerIds;
+  expectFalse(tree.canSafelyDelete("A", &blockerIds, &error), "A should not be deletable in diamond");
+  auto blockers = toNames(tree, blockerIds);
   expectContains(blockers, "B", "A blockers include B");
   expectContains(blockers, "C", "A blockers include C");
 
@@ -133,7 +146,8 @@ void testTopologicalOrder() {
   expectTrue(tree.addDependency("C", "B", &error), "C->B");
   expectTrue(tree.addDependency("E", "A", &error), "E->A");
 
-  const auto order = tree.topologicalOrder(&error);
+  const auto orderIds = tree.topologicalOrder(&error);
+  const auto order = toNames(tree, orderIds);
   expectEqual(order.size(), 4U, "topological order should contain all modules");
 
   const auto indices = indexMap(order);
@@ -149,7 +163,7 @@ void testMissingNodeErrors() {
   expectFalse(tree.addDependency("X", "Y", &error), "dependency between unknown nodes should fail");
   expectTrue(!error.empty(), "unknown dependency should set error");
 
-  std::vector<std::string> blockers;
+  std::vector<lifetree::ModuleId> blockers;
   error.clear();
   expectFalse(tree.canSafelyDelete("X", &blockers, &error), "canSafelyDelete on unknown node should fail");
   expectTrue(!error.empty(), "unknown delete check should set error");
@@ -165,7 +179,7 @@ void testRemoveDependency() {
   expectTrue(tree.removeDependency("B", "A", &error), "remove B->A");
   expectEqual(tree.dependencyEdgeCount(), 0U, "edge count should be 0 after remove");
 
-  std::vector<std::string> blockers;
+  std::vector<lifetree::ModuleId> blockers;
   expectTrue(tree.canSafelyDelete("A", &blockers, &error), "A should be deletable after removing dependency");
 }
 
@@ -182,12 +196,12 @@ void testTransitiveQueriesAndAnalysis() {
   expectTrue(tree.addDependency("D", "B", &error), "D->B");
   expectTrue(tree.addDependency("E", "D", &error), "E->D");
 
-  const auto transitiveDependencies = tree.transitiveDependencies("E", &error);
+  const auto transitiveDependencies = toNames(tree, tree.transitiveDependencies("E", &error));
   expectContains(transitiveDependencies, "D", "E transitive deps contain D");
   expectContains(transitiveDependencies, "B", "E transitive deps contain B");
   expectContains(transitiveDependencies, "A", "E transitive deps contain A");
 
-  const auto transitiveDependents = tree.transitiveDependents("A", &error);
+  const auto transitiveDependents = toNames(tree, tree.transitiveDependents("A", &error));
   expectContains(transitiveDependents, "B", "A transitive dependents contain B");
   expectContains(transitiveDependents, "C", "A transitive dependents contain C");
   expectContains(transitiveDependents, "D", "A transitive dependents contain D");
@@ -196,8 +210,11 @@ void testTransitiveQueriesAndAnalysis() {
   lifetree::DeleteAnalysis analysis;
   expectTrue(tree.analyzeDelete("A", &analysis, &error), "analyzeDelete(A) should succeed");
   expectFalse(analysis.CanSafelyDelete, "A should not be safely deletable");
-  expectContains(analysis.DirectDependents, "B", "A direct dependents include B");
-  expectContains(analysis.TransitiveDependents, "E", "A transitive dependents include E");
+  
+  auto direct = toNames(tree, analysis.DirectDependents);
+  auto trans = toNames(tree, analysis.TransitiveDependents);
+  expectContains(direct, "B", "A direct dependents include B");
+  expectContains(trans, "E", "A transitive dependents include E");
   expectTrue(!analysis.SuggestedCascadeOrder.empty(), "cascade order should not be empty");
 }
 
@@ -213,7 +230,7 @@ void testCascadeDelete() {
   expectTrue(tree.addDependency("C", "B", &error), "C->B");
   expectTrue(tree.addDependency("D", "A", &error), "D->A");
 
-  std::vector<std::string> deleted;
+  std::vector<lifetree::ModuleId> deleted;
   expectTrue(tree.forceDeleteWithCascade("A", &deleted, &error), "cascade delete A should succeed");
   expectEqual(tree.moduleCount(), 0U, "all modules should be removed by cascade delete");
   expectEqual(deleted.size(), 4U, "deleted list size should be 4");
@@ -234,15 +251,15 @@ void testStatsAndTopologyHelpers() {
   expectEqual(stats.Modules, 4U, "stats modules");
   expectEqual(stats.DependencyEdges, 2U, "stats edges");
 
-  const auto roots = tree.roots();
+  const auto roots = toNames(tree, tree.roots());
   expectContains(roots, "A", "roots include A");
   expectContains(roots, "X", "roots include X");
 
-  const auto leaves = tree.leaves();
+  const auto leaves = toNames(tree, tree.leaves());
   expectContains(leaves, "C", "leaves include C");
   expectContains(leaves, "X", "leaves include X");
 
-  const auto isolated = tree.isolatedModules();
+  const auto isolated = toNames(tree, tree.isolatedModules());
   expectContains(isolated, "X", "isolated includes X");
 
   const auto dot = tree.toDot();
@@ -387,7 +404,7 @@ void testDeleteContractNonMutatingWhenBlocked() {
 
   const std::size_t initialModules = tree.moduleCount();
   const std::size_t initialEdges = tree.dependencyEdgeCount();
-  const auto initialDependents = tree.getDependents("A", &error);
+  const auto initialDependents = toNames(tree, tree.getDependents("A", &error));
   expectContains(initialDependents, "B", "A dependents should include B before delete attempt");
 
   error.clear();
@@ -399,8 +416,73 @@ void testDeleteContractNonMutatingWhenBlocked() {
   expectEqual(tree.dependencyEdgeCount(), initialEdges, "blocked delete should not change edge count");
 
   error.clear();
-  const auto dependentsAfter = tree.getDependents("A", &error);
+  const auto dependentsAfter = toNames(tree, tree.getDependents("A", &error));
   expectContains(dependentsAfter, "B", "blocked delete should preserve dependent edge");
+}
+
+void testGhostEdgeHandling() {
+  lifetree::LifeTree tree;
+  std::string error;
+
+  expectTrue(tree.addModule("A", &error), "add A");
+  expectTrue(tree.addModule("B", &error), "add B");
+  expectTrue(tree.addDependency("A", "B", &error), "A->B"); // A depends on B
+
+  lifetree::ModuleId oldB = 0;
+  expectTrue(tree.unregisterModule("B", &oldB, &error), "unregister old B");
+
+  expectTrue(tree.addModule("B", &error), "add new B");
+
+  // Querying A's dependencies should yield the ModuleId of old B!
+  const auto deps = tree.getDependencies("A", &error);
+  expectEqual(deps.size(), 1U, "A should have 1 dependency");
+  expectEqual(deps[0], oldB, "A's dependency MUST exactly match the ID of the old deferred B");
+
+  // Querying new B's dependents should be empty!
+  const auto newBDeps = tree.getDependents("B", &error);
+  expectEqual(newBDeps.size(), 0U, "New B should have no dependents");
+}
+
+void testGarbageCollection() {
+  lifetree::LifeTree tree;
+  std::string error;
+
+  expectTrue(tree.addModule("A", &error), "add A");
+  expectTrue(tree.addModule("B", &error), "add B");
+  expectTrue(tree.addDependency("A", "B", &error), "A->B");
+
+  expectTrue(tree.unregisterModule("B", nullptr, &error), "unregister B");
+  
+  std::vector<lifetree::ModuleId> deleted;
+  expectEqual(tree.garbageCollect(&deleted), 0U, "garbageCollect should free 0 nodes initially, B is blocked by A");
+  
+  expectTrue(tree.deleteModule("A", &error), "delete A and drop dependents to B");
+  
+  const auto deferred = tree.getDeferredModules();
+  expectEqual(deferred.size(), 1U, "should have 1 deferred module");
+  
+  expectEqual(tree.garbageCollect(&deleted), 1U, "garbageCollect should free B now that A is gone");
+  expectEqual(tree.moduleCount(), 0U, "graph should be totally empty");
+}
+
+void testDeterministicTopology() {
+  lifetree::LifeTree tree;
+  std::string error;
+
+  // Add highly ambiguous structure
+  expectTrue(tree.addModule("A", &error), "");
+  expectTrue(tree.addModule("B", &error), "");
+  expectTrue(tree.addModule("C", &error), "");
+  expectTrue(tree.addModule("D", &error), "");
+  
+  // No dependencies, meaning they can be evaluated in ANY order
+  const auto order1 = tree.topologicalOrder();
+  const auto order2 = tree.topologicalOrder();
+  
+  expectEqual(order1.size(), 4U, "Should resolve 4 modules");
+  for (std::size_t i = 0; i < order1.size(); ++i) {
+      expectEqual(order1[i], order2[i], "Deterministic topology should yield identically matching order every time");
+  }
 }
 
 } // namespace
@@ -421,6 +503,11 @@ int main() {
   testUnregisterAndDestroyLifecycle();
   testLifecycleObservabilityById();
   testDeleteContractNonMutatingWhenBlocked();
+  
+  // New verification tests
+  testGhostEdgeHandling();
+  testGarbageCollection();
+  testDeterministicTopology();
 
   if (failures == 0) {
     std::cout << "[PASS] all LifeTree tests passed\n";
