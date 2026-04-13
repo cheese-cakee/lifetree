@@ -1,6 +1,6 @@
 # LifeTree
 
-Deterministic, memory-safe Directed Acyclic Graph (DAG) for C++ runtime module orchestration.
+Deterministic, memory-safe Directed Acyclic Graph (DAG) for C++ runtime module lifecycle management.
 
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://isocpp.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)]()
