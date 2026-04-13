@@ -186,15 +186,10 @@ int main() {
 
     section("Step 9: Graph export");
 
-    LifeTree dotTree;
-    dotTree.addModule("Pipeline");
-    dotTree.addModule("Filter");
-    dotTree.addModule("Sink");
-    dotTree.addDependency("Pipeline", "Filter");
-    dotTree.addDependency("Filter", "Sink");
+    cout << "\n[DOT]\n" << tree.toDot() << "\n";
 
-    cout << "\n[DOT]\n" << dotTree.toDot() << "\n";
-    cout << "[JSON]\n" << dotTree.toJson() << "\n";
+    string json = tree.toJson();
+    cout << "\n[JSON]\n" << json << "\n";
 
     section("Step 10: Invariant validation");
 
